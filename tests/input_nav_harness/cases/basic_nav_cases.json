@@ -1,0 +1,18 @@
+{
+  "cases": [
+    {
+      "name": "top_nav_enter_does_not_fallthrough_to_body",
+      "screen": "main_menu_screen",
+      "context": {},
+      "keys": ["UP", "ENTER"],
+      "expect_events": ["topnav_back"]
+    },
+    {
+      "name": "grid_restore_last_body_selection_after_top_nav",
+      "screen": "main_menu_screen",
+      "context": {},
+      "keys": ["RIGHT", "UP", "DOWN", "ENTER"],
+      "expect_events": ["Seeds"]
+    }
+  ]
+}

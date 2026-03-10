@@ -103,6 +103,7 @@ static bool focus_top(nav_ctx_t *ctx, size_t idx) {
         if (f && lv_obj_is_valid(f)) {
             ctx->parked_body_obj = f;
             lv_obj_clear_flag(f, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_state(f, LV_STATE_DISABLED);
         }
     }
     return true;
@@ -120,6 +121,7 @@ static bool focus_body(nav_ctx_t *ctx, size_t idx) {
 
     if (ctx->parked_body_obj && lv_obj_is_valid(ctx->parked_body_obj)) {
         lv_obj_add_flag(ctx->parked_body_obj, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_state(ctx->parked_body_obj, LV_STATE_DISABLED);
     }
     ctx->parked_body_obj = NULL;
 
@@ -326,6 +328,7 @@ static void nav_cleanup_handler(lv_event_t *e) {
 
     if (ctx->parked_body_obj && lv_obj_is_valid(ctx->parked_body_obj)) {
         lv_obj_add_flag(ctx->parked_body_obj, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_state(ctx->parked_body_obj, LV_STATE_DISABLED);
         ctx->parked_body_obj = NULL;
     }
     set_nav_top_zone_active(false);
