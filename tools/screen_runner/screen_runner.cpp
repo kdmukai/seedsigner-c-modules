@@ -144,23 +144,20 @@ static uint32_t map_sdl_key(SDL_Keycode key) {
         case SDLK_RETURN:
         case SDLK_KP_ENTER: return LV_KEY_ENTER;
 
-        // Compatibility choice (temporary): map AUX test keys to ENTER so desktop
-        // runner can exercise KEY1/2/3 default-enter behavior even when distinct
-        // aux keycodes are not propagated through the host keypad path.
+        // Compatibility choice (temporary): map AUX numeric test keys to ENTER so
+        // desktop runner can exercise KEY1/2/3 default-enter behavior even when
+        // distinct aux keycodes are not propagated through the host keypad path.
         case SDLK_1:
         case SDLK_KP_1:
-        case SDLK_EXCLAIM:
-        case SDLK_F1: return LV_KEY_ENTER;
+        case SDLK_EXCLAIM: return LV_KEY_ENTER;
 
         case SDLK_2:
         case SDLK_KP_2:
-        case SDLK_AT:
-        case SDLK_F2: return LV_KEY_ENTER;
+        case SDLK_AT: return LV_KEY_ENTER;
 
         case SDLK_3:
         case SDLK_KP_3:
-        case SDLK_HASH:
-        case SDLK_F3: return LV_KEY_ENTER;
+        case SDLK_HASH: return LV_KEY_ENTER;
 
         default: return 0;
     }
