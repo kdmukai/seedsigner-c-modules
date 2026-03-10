@@ -54,3 +54,7 @@ Thumbs.db
 .idea/
 
 # Screenshot generator output
+
+# Screenshot generator build directories
+tools/screenshot_generator/build-*/
+tools/screenshot_generator/build/
