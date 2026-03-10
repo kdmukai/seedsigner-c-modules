@@ -26,7 +26,12 @@ static lv_obj_t* top_nav_icon_button(lv_obj_t* lv_parent, const char* icon, lv_a
     lv_obj_set_style_shadow_width(btn, 0, LV_PART_MAIN);
     lv_obj_set_style_outline_width(btn, 0, LV_PART_MAIN);
     lv_obj_set_style_outline_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
     lv_obj_set_style_bg_color(btn, lv_color_hex(ACCENT_COLOR), LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(ACCENT_COLOR), LV_PART_MAIN | LV_STATE_FOCUS_KEY);
 
     lv_obj_t* lbl = lv_label_create(btn);
     lv_label_set_text(lbl, icon ? icon : "");
@@ -315,6 +320,10 @@ lv_obj_t* button(lv_obj_t* lv_parent, const char* text, lv_obj_t* align_to) {
     lv_obj_set_style_radius(lv_button, BUTTON_RADIUS, LV_PART_MAIN);
     lv_obj_set_style_outline_width(lv_button, 0, LV_PART_MAIN);
     lv_obj_set_style_outline_width(lv_button, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_width(lv_button, 0, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_border_width(lv_button, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(lv_button, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(lv_button, 0, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
 
     lv_obj_t* label = lv_label_create(lv_button);
     lv_obj_set_style_text_font(label, &BUTTON_FONT, LV_PART_MAIN);
@@ -350,6 +359,10 @@ lv_obj_t* large_icon_button(lv_obj_t* lv_parent, const char* icon, const char* t
     lv_obj_set_style_radius(lv_button, BUTTON_RADIUS, LV_PART_MAIN);
     lv_obj_set_style_outline_width(lv_button, 0, LV_PART_MAIN);
     lv_obj_set_style_outline_width(lv_button, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_width(lv_button, 0, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_border_width(lv_button, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(lv_button, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(lv_button, 0, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
 
     lv_obj_set_layout(lv_button, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(lv_button, LV_FLEX_FLOW_COLUMN);
