@@ -180,6 +180,12 @@ static size_t grid_move(size_t current, size_t body_count, size_t cols, uint32_t
     return current;
 }
 
+static inline void consume_key_event(lv_event_t *e) {
+    if (!e) return;
+    lv_event_stop_bubbling(e);
+    lv_event_stop_processing(e);
+}
+
 static void nav_key_handler(lv_event_t *e) {
     if (!e) return;
     if (lv_event_get_code(e) != LV_EVENT_KEY) return;
@@ -194,16 +200,19 @@ static void nav_key_handler(lv_event_t *e) {
         nav_aux_action_t action = action_for_aux(ctx, aux_idx);
         if (action == NAV_AUX_ENTER) {
             activate_focused(ctx);
+            consume_key_event(e);
         } else if (action == NAV_AUX_EMIT) {
             if (aux_idx == 1) seedsigner_lvgl_on_aux_key("KEY1");
             else if (aux_idx == 2) seedsigner_lvgl_on_aux_key("KEY2");
             else if (aux_idx == 3) seedsigner_lvgl_on_aux_key("KEY3");
+            consume_key_event(e);
         }
         return;
     }
 
     if (key == LV_KEY_ENTER) {
         activate_focused(ctx);
+        consume_key_event(e);
         return;
     }
 
@@ -224,6 +233,7 @@ static void nav_key_handler(lv_event_t *e) {
         if (ctx->zone == NAV_ZONE_TOP && ctx->top_count > 1 && top_i >= 0) {
             if (key == LV_KEY_LEFT && top_i > 0) focus_top(ctx, (size_t)(top_i - 1));
             else if (key == LV_KEY_RIGHT && (size_t)(top_i + 1) < ctx->top_count) focus_top(ctx, (size_t)(top_i + 1));
+            consume_key_event(e);
             return;
         }
     }
@@ -237,6 +247,7 @@ static void nav_key_handler(lv_event_t *e) {
                     focus_top(ctx, 0);
                 }
             }
+            consume_key_event(e);
             return;
         }
 
@@ -249,10 +260,12 @@ static void nav_key_handler(lv_event_t *e) {
             } else if (ctx->zone == NAV_ZONE_BODY && body_i >= 0 && (size_t)(body_i + 1) < ctx->body_count) {
                 focus_body(ctx, (size_t)(body_i + 1));
             }
+            consume_key_event(e);
             return;
         }
 
         if (key == LV_KEY_LEFT || key == LV_KEY_RIGHT) {
+            consume_key_event(e);
             return; // body no-op; top-nav already handled above
         }
     }
@@ -271,6 +284,7 @@ static void nav_key_handler(lv_event_t *e) {
                 }
                 focus_body(ctx, target);
             }
+            consume_key_event(e);
             return;
         }
 
@@ -278,6 +292,7 @@ static void nav_key_handler(lv_event_t *e) {
             if (key == LV_KEY_UP && (size_t)body_i < cols && ctx->top_count > 0) {
                 size_t target_top = ((size_t)body_i < ctx->top_count) ? (size_t)body_i : 0;
                 focus_top(ctx, target_top);
+                consume_key_event(e);
                 return;
             }
 
@@ -286,10 +301,12 @@ static void nav_key_handler(lv_event_t *e) {
                 if (next_i != (size_t)body_i) {
                     focus_body(ctx, next_i);
                 }
+                consume_key_event(e);
                 return;
             }
         }
 
+        consume_key_event(e);
         return;
     }
 }
