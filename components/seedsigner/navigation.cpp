@@ -19,6 +19,10 @@ typedef struct {
     nav_aux_policy_t aux_policy;
 } nav_ctx_t;
 
+typedef struct {
+    lv_obj_t *target;
+} nav_focus_req_t;
+
 static bool is_aux_key(uint32_t key, int *idx_out) {
 #ifdef LV_KEY_F1
     if (key == LV_KEY_F1) { *idx_out = 1; return true; }
@@ -50,18 +54,38 @@ static void activate_focused(nav_ctx_t *ctx) {
     lv_event_send(obj, LV_EVENT_CLICKED, NULL);
 }
 
+static void nav_focus_async_cb(void *user_data) {
+    nav_focus_req_t *req = (nav_focus_req_t *)user_data;
+    if (!req) return;
+    if (req->target && lv_obj_is_valid(req->target)) {
+        lv_group_focus_obj(req->target);
+    }
+    lv_mem_free(req);
+}
+
+static bool request_focus_obj(lv_obj_t *obj) {
+    if (!obj || !lv_obj_is_valid(obj)) return false;
+    nav_focus_req_t *req = (nav_focus_req_t *)lv_mem_alloc(sizeof(nav_focus_req_t));
+    if (!req) return false;
+    req->target = obj;
+    lv_async_call(nav_focus_async_cb, req);
+    return true;
+}
+
 static bool focus_top(nav_ctx_t *ctx, size_t idx) {
     if (!ctx || idx >= ctx->top_count) return false;
-    lv_group_focus_obj(ctx->top_items[idx]);
+    lv_obj_t *obj = ctx->top_items[idx];
+    if (!obj || !lv_obj_is_valid(obj)) return false;
     ctx->zone = NAV_ZONE_TOP;
-    return true;
+    return request_focus_obj(obj);
 }
 
 static bool focus_body(nav_ctx_t *ctx, size_t idx) {
     if (!ctx || idx >= ctx->body_count) return false;
-    lv_group_focus_obj(ctx->body_items[idx]);
+    lv_obj_t *obj = ctx->body_items[idx];
+    if (!obj || !lv_obj_is_valid(obj)) return false;
     ctx->zone = NAV_ZONE_BODY;
-    return true;
+    return request_focus_obj(obj);
 }
 
 static int focused_index_in(nav_ctx_t *ctx, lv_obj_t **arr, size_t count) {
