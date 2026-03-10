@@ -19,9 +19,6 @@ typedef struct {
     nav_aux_policy_t aux_policy;
 } nav_ctx_t;
 
-typedef struct {
-    lv_obj_t *target;
-} nav_focus_req_t;
 
 static bool is_aux_key(uint32_t key, int *idx_out) {
 #ifdef LV_KEY_F1
@@ -54,38 +51,58 @@ static void activate_focused(nav_ctx_t *ctx) {
     lv_event_send(obj, LV_EVENT_CLICKED, NULL);
 }
 
-static void nav_focus_async_cb(void *user_data) {
-    nav_focus_req_t *req = (nav_focus_req_t *)user_data;
-    if (!req) return;
-    if (req->target && lv_obj_is_valid(req->target)) {
-        lv_group_focus_obj(req->target);
+static int focused_logical_index(nav_ctx_t *ctx) {
+    if (!ctx || !ctx->group) return -1;
+    lv_obj_t *f = lv_group_get_focused(ctx->group);
+    if (!f) return -1;
+
+    for (size_t i = 0; i < ctx->top_count; ++i) {
+        if (ctx->top_items[i] == f) return (int)i;
     }
-    lv_mem_free(req);
+    for (size_t i = 0; i < ctx->body_count; ++i) {
+        if (ctx->body_items && ctx->body_items[i] == f) return (int)(ctx->top_count + i);
+    }
+    return -1;
 }
 
-static bool request_focus_obj(lv_obj_t *obj) {
-    if (!obj || !lv_obj_is_valid(obj)) return false;
-    nav_focus_req_t *req = (nav_focus_req_t *)lv_mem_alloc(sizeof(nav_focus_req_t));
-    if (!req) return false;
-    req->target = obj;
-    lv_async_call(nav_focus_async_cb, req);
+static bool focus_logical_index(nav_ctx_t *ctx, size_t logical_idx) {
+    if (!ctx || !ctx->group) return false;
+
+    size_t total = ctx->top_count + ctx->body_count;
+    if (logical_idx >= total) return false;
+
+    int cur = focused_logical_index(ctx);
+    if (cur < 0) {
+        // Initial placement fallback when no current focus exists.
+        lv_obj_t *target = NULL;
+        if (logical_idx < ctx->top_count) target = ctx->top_items[logical_idx];
+        else if (ctx->body_items) target = ctx->body_items[logical_idx - ctx->top_count];
+        if (!target || !lv_obj_is_valid(target)) return false;
+        lv_group_focus_obj(target);
+        return true;
+    }
+
+    while ((size_t)cur < logical_idx) {
+        lv_group_focus_next(ctx->group);
+        cur++;
+    }
+    while ((size_t)cur > logical_idx) {
+        lv_group_focus_prev(ctx->group);
+        cur--;
+    }
     return true;
 }
 
 static bool focus_top(nav_ctx_t *ctx, size_t idx) {
     if (!ctx || idx >= ctx->top_count) return false;
-    lv_obj_t *obj = ctx->top_items[idx];
-    if (!obj || !lv_obj_is_valid(obj)) return false;
     ctx->zone = NAV_ZONE_TOP;
-    return request_focus_obj(obj);
+    return focus_logical_index(ctx, idx);
 }
 
 static bool focus_body(nav_ctx_t *ctx, size_t idx) {
     if (!ctx || idx >= ctx->body_count) return false;
-    lv_obj_t *obj = ctx->body_items[idx];
-    if (!obj || !lv_obj_is_valid(obj)) return false;
     ctx->zone = NAV_ZONE_BODY;
-    return request_focus_obj(obj);
+    return focus_logical_index(ctx, ctx->top_count + idx);
 }
 
 static int focused_index_in(nav_ctx_t *ctx, lv_obj_t **arr, size_t count) {
@@ -274,6 +291,7 @@ void nav_bind(const nav_config_t *cfg) {
     lv_memset_00(ctx, sizeof(*ctx));
 
     ctx->group = lv_group_create();
+    lv_group_set_wrap(ctx->group, false);
     // Avoid re-entrant focus/state churn while group population is in progress.
     // We'll unfreeze and set explicit initial focus once all objects are added.
     lv_group_focus_freeze(ctx->group, true);
