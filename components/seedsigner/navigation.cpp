@@ -80,18 +80,14 @@ static size_t first_valid_body_index(nav_ctx_t *ctx) {
     return NAV_INDEX_NONE;
 }
 
-static int focused_logical_index(nav_ctx_t *ctx) {
-    if (!ctx || !ctx->group) return -1;
-    lv_obj_t *f = lv_group_get_focused(ctx->group);
-    if (!f) return -1;
-
-    for (size_t i = 0; i < ctx->top_count; ++i) {
-        if (ctx->top_items[i] == f) return (int)i;
+static lv_obj_t *logical_index_to_obj(nav_ctx_t *ctx, size_t logical_idx) {
+    if (!ctx) return NULL;
+    if (logical_idx < ctx->top_count) {
+        return ctx->top_items[logical_idx];
     }
-    for (size_t i = 0; i < ctx->body_count; ++i) {
-        if (ctx->body_items && ctx->body_items[i] == f) return (int)(ctx->top_count + i);
-    }
-    return -1;
+    size_t body_idx = logical_idx - ctx->top_count;
+    if (!ctx->body_items || body_idx >= ctx->body_count) return NULL;
+    return ctx->body_items[body_idx];
 }
 
 static void apply_pending_focus(nav_ctx_t *ctx) {
@@ -103,26 +99,9 @@ static void apply_pending_focus(nav_ctx_t *ctx) {
         return;
     }
 
-    int cur = focused_logical_index(ctx);
-    if (cur < 0) {
-        lv_obj_t *target = NULL;
-        if (ctx->pending_logical_index < ctx->top_count) {
-            target = ctx->top_items[ctx->pending_logical_index];
-        } else if (ctx->body_items) {
-            target = ctx->body_items[ctx->pending_logical_index - ctx->top_count];
-        }
-        if (target && lv_obj_is_valid(target)) {
-            lv_group_focus_obj(target);
-        }
-    } else {
-        while ((size_t)cur < ctx->pending_logical_index) {
-            lv_group_focus_next(ctx->group);
-            cur++;
-        }
-        while ((size_t)cur > ctx->pending_logical_index) {
-            lv_group_focus_prev(ctx->group);
-            cur--;
-        }
+    lv_obj_t *target = logical_index_to_obj(ctx, ctx->pending_logical_index);
+    if (target && lv_obj_is_valid(target)) {
+        lv_group_focus_obj(target);
     }
 
     ctx->zone = ctx->pending_zone;
