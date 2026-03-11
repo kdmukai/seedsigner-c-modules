@@ -18,6 +18,11 @@ typedef struct {
     nav_zone_t zone;
     nav_body_layout_t body_layout;
     nav_aux_policy_t aux_policy;
+
+    lv_timer_t *focus_timer;
+    bool focus_pending;
+    size_t pending_logical_index;
+    nav_zone_t pending_zone;
 } nav_ctx_t;
 
 static inline void consume_key_event(lv_event_t *e) {
@@ -75,23 +80,86 @@ static size_t first_valid_body_index(nav_ctx_t *ctx) {
     return NAV_INDEX_NONE;
 }
 
-static bool focus_top(nav_ctx_t *ctx, size_t idx) {
-    if (!ctx || idx >= ctx->top_count || !ctx->group) return false;
-    lv_obj_t *obj = ctx->top_items[idx];
-    if (!obj || !lv_obj_is_valid(obj)) return false;
-    ctx->zone = NAV_ZONE_TOP;
-    lv_group_focus_obj(obj);
+static int focused_logical_index(nav_ctx_t *ctx) {
+    if (!ctx || !ctx->group) return -1;
+    lv_obj_t *f = lv_group_get_focused(ctx->group);
+    if (!f) return -1;
+
+    for (size_t i = 0; i < ctx->top_count; ++i) {
+        if (ctx->top_items[i] == f) return (int)i;
+    }
+    for (size_t i = 0; i < ctx->body_count; ++i) {
+        if (ctx->body_items && ctx->body_items[i] == f) return (int)(ctx->top_count + i);
+    }
+    return -1;
+}
+
+static void apply_pending_focus(nav_ctx_t *ctx) {
+    if (!ctx || !ctx->group || !ctx->focus_pending) return;
+
+    size_t total = ctx->top_count + ctx->body_count;
+    if (ctx->pending_logical_index >= total) {
+        ctx->focus_pending = false;
+        return;
+    }
+
+    int cur = focused_logical_index(ctx);
+    if (cur < 0) {
+        lv_obj_t *target = NULL;
+        if (ctx->pending_logical_index < ctx->top_count) {
+            target = ctx->top_items[ctx->pending_logical_index];
+        } else if (ctx->body_items) {
+            target = ctx->body_items[ctx->pending_logical_index - ctx->top_count];
+        }
+        if (target && lv_obj_is_valid(target)) {
+            lv_group_focus_obj(target);
+        }
+    } else {
+        while ((size_t)cur < ctx->pending_logical_index) {
+            lv_group_focus_next(ctx->group);
+            cur++;
+        }
+        while ((size_t)cur > ctx->pending_logical_index) {
+            lv_group_focus_prev(ctx->group);
+            cur--;
+        }
+    }
+
+    ctx->zone = ctx->pending_zone;
+    if (ctx->zone == NAV_ZONE_BODY && ctx->pending_logical_index >= ctx->top_count) {
+        ctx->last_body_index = ctx->pending_logical_index - ctx->top_count;
+    }
+    ctx->focus_pending = false;
+}
+
+static void focus_timer_cb(lv_timer_t *t) {
+    if (!t) return;
+    nav_ctx_t *ctx = (nav_ctx_t *)t->user_data;
+    apply_pending_focus(ctx);
+}
+
+static bool queue_focus_top(nav_ctx_t *ctx, size_t idx) {
+    if (!ctx || idx >= ctx->top_count) return false;
+    ctx->pending_logical_index = idx;
+    ctx->pending_zone = NAV_ZONE_TOP;
+    ctx->focus_pending = true;
     return true;
 }
 
-static bool focus_body(nav_ctx_t *ctx, size_t idx) {
-    if (!ctx || idx >= ctx->body_count || !ctx->group || !ctx->body_items) return false;
-    lv_obj_t *obj = ctx->body_items[idx];
-    if (!obj || !lv_obj_is_valid(obj)) return false;
-    ctx->zone = NAV_ZONE_BODY;
-    ctx->last_body_index = idx;
-    lv_group_focus_obj(obj);
+static bool queue_focus_body(nav_ctx_t *ctx, size_t idx) {
+    if (!ctx || idx >= ctx->body_count) return false;
+    ctx->pending_logical_index = ctx->top_count + idx;
+    ctx->pending_zone = NAV_ZONE_BODY;
+    ctx->focus_pending = true;
     return true;
+}
+
+static bool focus_top(nav_ctx_t *ctx, size_t idx) {
+    return queue_focus_top(ctx, idx);
+}
+
+static bool focus_body(nav_ctx_t *ctx, size_t idx) {
+    return queue_focus_body(ctx, idx);
 }
 
 static size_t grid_columns_for_count(size_t body_count) {
@@ -264,6 +332,11 @@ static void nav_cleanup_handler(lv_event_t *e) {
     nav_ctx_t *ctx = (nav_ctx_t *)lv_event_get_user_data(e);
     if (!ctx) return;
 
+    if (ctx->focus_timer) {
+        lv_timer_del(ctx->focus_timer);
+        ctx->focus_timer = NULL;
+    }
+
     if (ctx->group) {
         lv_group_del(ctx->group);
         ctx->group = NULL;
@@ -285,6 +358,13 @@ void nav_bind(const nav_config_t *cfg) {
     ctx->group = lv_group_create();
     lv_group_set_wrap(ctx->group, false);
     lv_group_focus_freeze(ctx->group, true);
+
+    ctx->focus_timer = lv_timer_create(focus_timer_cb, 1, ctx);
+    if (!ctx->focus_timer) {
+        if (ctx->group) lv_group_del(ctx->group);
+        lv_mem_free(ctx);
+        return;
+    }
 
     ctx->body_count = cfg->body_item_count;
     if (ctx->body_count > 0) {
@@ -334,8 +414,10 @@ void nav_bind(const nav_config_t *cfg) {
         if (target != NAV_INDEX_NONE) {
             ctx->last_body_index = target;
             focus_body(ctx, target);
+            apply_pending_focus(ctx);
         } else if (ctx->top_count > 0) {
             focus_top(ctx, 0);
+            apply_pending_focus(ctx);
         }
     }
 
