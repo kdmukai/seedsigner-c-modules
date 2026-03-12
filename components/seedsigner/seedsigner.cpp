@@ -10,8 +10,12 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <cmath>
 
 using json = nlohmann::json;
+
+// Defined in components/seedsigner/images/seedsigner_logo_img.c
+LV_IMG_DECLARE(seedsigner_logo_img);
 
 
 // Reusable utility: build TopNav from any screen JSON config.
@@ -385,6 +389,183 @@ void main_menu_screen(void *ctx)
         NAV_BODY_GRID,
         0
     );
+
+    load_screen_and_cleanup_previous(scr);
+}
+
+
+// ---------------------------------------------------------------------------
+// screensaver_screen
+// ---------------------------------------------------------------------------
+
+typedef struct {
+    lv_obj_t   *screen;
+    lv_obj_t   *logo_img;
+    lv_timer_t *timer;
+    float       center_x;  // logo center, float for sub-pixel accuracy
+    float       center_y;
+    float       vel_x;     // pixels per millisecond
+    float       vel_y;
+    uint32_t    last_tick;
+    lv_coord_t  screen_w;
+    lv_coord_t  screen_h;
+    lv_coord_t  logo_w;    // displayed width after zoom
+    lv_coord_t  logo_h;    // displayed height after zoom
+} screensaver_ctx_t;
+
+// Speed range: 0.07 – 0.18 pixels/ms  (70 – 180 px/s).
+static constexpr float SAVER_SPEED_MIN = 0.07f;
+static constexpr float SAVER_SPEED_MAX = 0.18f;
+
+// Minimum angle from the wall surface on departure (degrees).
+// Prevents the logo from hugging a wall at a shallow grazing angle.
+static constexpr float SAVER_MIN_WALL_ANGLE_RAD = 25.0f * 3.14159265f / 180.0f;
+
+// Returns a random float in [lo, hi).
+static float saver_randf(float lo, float hi) {
+    uint32_t r = lv_rand(0, 0x7fffffffu);
+    return lo + (hi - lo) * ((float)r / (float)0x7fffffffu);
+}
+
+// Pick a random departure angle within the half-plane defined by 'normal_angle'
+// (the inward wall normal), clamped so the angle is at least SAVER_MIN_WALL_ANGLE
+// away from either wall surface edge.  This eliminates wall-hugging trajectories.
+static float saver_bounce_angle(float normal_angle) {
+    float max_offset = (3.14159265f / 2.0f) - SAVER_MIN_WALL_ANGLE_RAD;
+    float offset = saver_randf(-max_offset, max_offset);
+    return normal_angle + offset;
+}
+
+static void screensaver_timer_cb(lv_timer_t *timer) {
+    screensaver_ctx_t *ctx = (screensaver_ctx_t *)timer->user_data;
+
+    uint32_t now     = lv_tick_get();
+    uint32_t elapsed = now - ctx->last_tick;
+    ctx->last_tick   = now;
+
+    // Clamp elapsed to avoid huge jumps after screen switches or pauses.
+    if (elapsed > 200) elapsed = 200;
+
+    ctx->center_x += ctx->vel_x * (float)elapsed;
+    ctx->center_y += ctx->vel_y * (float)elapsed;
+
+    bool bounced_x = false;
+    bool bounced_y = false;
+    bool hit_left  = false;
+    bool hit_top   = false;
+
+    if (ctx->center_x < 0.0f) {
+        ctx->center_x = 0.0f;
+        bounced_x = true; hit_left = true;
+    } else if (ctx->center_x > (float)ctx->screen_w) {
+        ctx->center_x = (float)ctx->screen_w;
+        bounced_x = true;
+    }
+
+    if (ctx->center_y < 0.0f) {
+        ctx->center_y = 0.0f;
+        bounced_y = true; hit_top = true;
+    } else if (ctx->center_y > (float)ctx->screen_h) {
+        ctx->center_y = (float)ctx->screen_h;
+        bounced_y = true;
+    }
+
+    if (bounced_x || bounced_y) {
+        // Inward normal angle for the wall(s) hit.
+        // Screen coords: +x = right, +y = down.
+        // Left wall  normal: 0          Right wall normal: π
+        // Top wall   normal: π/2 (down) Bottom wall normal: -π/2 (up)
+        float normal;
+        if (bounced_x && bounced_y) {
+            // Corner: diagonal normal pointing toward screen interior.
+            normal = hit_left
+                ? (hit_top ? (3.14159265f / 4.0f)        // top-left  → SE
+                           : (-3.14159265f / 4.0f))       // bot-left  → NE
+                : (hit_top ? (3.0f * 3.14159265f / 4.0f) // top-right → SW
+                           : (-3.0f * 3.14159265f / 4.0f)); // bot-right → NW
+        } else if (bounced_x) {
+            normal = hit_left ? 0.0f : 3.14159265f;
+        } else {
+            normal = hit_top ? (3.14159265f / 2.0f) : (-3.14159265f / 2.0f);
+        }
+
+        float speed     = saver_randf(SAVER_SPEED_MIN, SAVER_SPEED_MAX);
+        float new_angle = saver_bounce_angle(normal);
+        ctx->vel_x = speed * cosf(new_angle);
+        ctx->vel_y = speed * sinf(new_angle);
+    }
+
+    lv_obj_set_pos(ctx->logo_img,
+                   (lv_coord_t)(ctx->center_x - ctx->logo_w / 2.0f),
+                   (lv_coord_t)(ctx->center_y - ctx->logo_h / 2.0f));
+}
+
+static void screensaver_cleanup_handler(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
+
+    screensaver_ctx_t *ctx = (screensaver_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx) return;
+
+    if (ctx->timer) {
+        lv_timer_del(ctx->timer);
+        ctx->timer = NULL;
+    }
+    lv_mem_free(ctx);
+}
+
+void screensaver_screen(void * /*ctx_json*/) {
+    lv_obj_t *scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
+
+    lv_coord_t screen_w = lv_disp_get_hor_res(NULL);
+    lv_coord_t screen_h = lv_disp_get_ver_res(NULL);
+
+    // Scale the logo so its height is ~25% of the screen height.
+    int raw_w = (int)seedsigner_logo_img.header.w;
+    int raw_h = (int)seedsigner_logo_img.header.h;
+    uint16_t zoom = (uint16_t)((screen_h / 4 * 256) / raw_h);
+    if (zoom < 1) zoom = 1;
+
+    lv_coord_t logo_w = (lv_coord_t)((raw_w * zoom + 128) / 256);
+    lv_coord_t logo_h = (lv_coord_t)((raw_h * zoom + 128) / 256);
+
+    lv_obj_t *logo_img = lv_img_create(scr);
+    lv_img_set_src(logo_img, &seedsigner_logo_img);
+    lv_img_set_zoom(logo_img, zoom);
+    lv_obj_set_size(logo_img, logo_w, logo_h);
+
+    // Allocate and initialise animation context.
+    screensaver_ctx_t *ctx = (screensaver_ctx_t *)lv_mem_alloc(sizeof(screensaver_ctx_t));
+    lv_memset_00(ctx, sizeof(*ctx));
+    ctx->screen   = scr;
+    ctx->logo_img = logo_img;
+    ctx->screen_w = screen_w;
+    ctx->screen_h = screen_h;
+    ctx->logo_w   = logo_w;
+    ctx->logo_h   = logo_h;
+
+    // Start at screen center.
+    ctx->center_x = screen_w / 2.0f;
+    ctx->center_y = screen_h / 2.0f;
+
+    // Random initial direction and speed.
+    float init_speed = saver_randf(SAVER_SPEED_MIN, SAVER_SPEED_MAX);
+    float init_angle = saver_randf(0.0f, 2.0f * 3.14159265f);
+    ctx->vel_x = init_speed * cosf(init_angle);
+    ctx->vel_y = init_speed * sinf(init_angle);
+
+    ctx->last_tick = lv_tick_get();
+
+    // Place logo at starting position.
+    lv_obj_set_pos(logo_img,
+                   (lv_coord_t)(ctx->center_x - logo_w / 2.0f),
+                   (lv_coord_t)(ctx->center_y - logo_h / 2.0f));
+
+    ctx->timer = lv_timer_create(screensaver_timer_cb, 16, ctx);
+
+    lv_obj_add_event_cb(scr, screensaver_cleanup_handler, LV_EVENT_DELETE, ctx);
 
     load_screen_and_cleanup_previous(scr);
 }

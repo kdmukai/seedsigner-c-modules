@@ -23,6 +23,7 @@ list(APPEND srcs
     "components.cpp"
     "input_profile.cpp"
     "navigation.cpp"
+    "images/seedsigner_logo_img.c"
 )
 
 

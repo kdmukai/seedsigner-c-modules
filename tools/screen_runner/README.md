@@ -1,52 +1,46 @@
 # screen_runner
 
-Interactive desktop runner for SeedSigner C-module screens.
+Interactive desktop runner for SeedSigner LVGL screens. Provides a fast local iteration loop without target hardware.
 
-Status: **planned / in implementation**
-Scope: interactive desktop harness for SeedSigner C-module screens using scenario definitions.
+## Features
 
-## Purpose
+- Scenario sidebar — click any row to load it instantly
+- Scenario variations listed under their parent screen name
+- Hardware keyboard navigation
+- Status bar shows button selection actions
 
-Provide a fast local loop for live screen interaction without ARMv6 emulation.
+## Controls
 
-Primary goals:
-- load and run existing C-module screens on desktop
-- reuse `../scenarios.json`
-- support keyboard navigation input testing
-- allow quick switching between `screen / variation` scenarios
+These apply on all platforms.
 
-## Planned behavior
+**Keyboard**
+- Arrow keys, Enter — forwarded to LVGL hardware nav
+- `1` / `2` / `3` — mapped to ENTER (KEY1/KEY2/KEY3 compatibility)
+- `PageUp` / `[` / `,` — load previous scenario
+- `PageDown` / `]` / `.` — load next scenario
 
-- Top runner chrome with a single scenario selector (`screen / variation`)
-- Embedded SeedSigner screen viewport below the chrome
-- Keyboard mapping:
-  - arrows -> directional nav
-  - Return/Enter -> select/press
-  - `1`/`2`/`3` -> KEY1/KEY2/KEY3
-- After scenario load, focus shifts into rendered screen automatically
+**Mouse**
+- Click any row in the sidebar to load that scenario
+- Scroll wheel over the sidebar scrolls the scenario list
 
 ---
 
-## OS-specific setup
-
-## macOS (active target)
+## macOS
 
 ### Dependencies
 
 - Xcode Command Line Tools
 - CMake
 - SDL2
-- libpng
-- (optional) ImageMagick
+- SDL2_ttf
+- ImageMagick (recommended — required for the title bar logo; build still succeeds without it but the logo will not appear)
 
 ### Install (Homebrew)
 
 ```bash
 xcode-select --install
-brew install cmake sdl2 libpng imagemagick
+brew install cmake sdl2 sdl2_ttf imagemagick
 ```
-
-> `imagemagick` is optional for this runner itself, but useful if screenshot/gif flows are used from the same environment.
 
 ### LVGL setup (fresh clone)
 
@@ -55,44 +49,28 @@ If `LVGL_ROOT` is not already available from your local build environment, clone
 ```bash
 # from repo root
 mkdir -p third_party
-
 git clone https://github.com/lvgl/lvgl.git third_party/lvgl
 cd third_party/lvgl
-
-# pin explicitly (set to the project target LVGL tag)
 git checkout <LVGL_TARGET_TAG>
 ```
 
 > Note: this step may be unnecessary if you already have a compatible LVGL tree and pass it via `-DLVGL_ROOT=...`.
 
-### Build steps
+### Build
 
 ```bash
 cmake -S tools/screen_runner \
       -B tools/screen_runner/build \
       -DLVGL_ROOT="$PWD/third_party/lvgl" \
-      -DCMAKE_PREFIX_PATH="$(brew --prefix sdl2)"
+      -DCMAKE_PREFIX_PATH="$(brew --prefix sdl2):$(brew --prefix sdl2_ttf)"
 cmake --build tools/screen_runner/build -j
 ```
 
-### Run steps
+### Run
 
 ```bash
 tools/screen_runner/build/screen_runner [tools/scenarios.json]
 ```
-
-Keyboard in current minimal slice:
-- arrows, Enter -> forwarded to LVGL keypad/nav path
-- `1`/`2`/`3` -> temporary compatibility mapping to ENTER
-  - note: distinct aux-key semantics will be added with dedicated runner aux-event plumbing
-- scenario switching:
-  - `PageUp` / `PageDown`
-  - mac-friendly: `[` / `]`
-  - fallback: `,` / `.`
-
-If CMake cannot find SDL2, pass one of:
-- `-DCMAKE_PREFIX_PATH="$(brew --prefix sdl2)"`
-- `-DSDL2_DIR=<path containing SDL2Config.cmake>`
 
 ---
 
@@ -100,35 +78,112 @@ If CMake cannot find SDL2, pass one of:
 
 ### Dependencies
 
-TBD
+- CMake ≥ 3.16
+- GCC or Clang with C++17 support
+- SDL2 dev package
+- SDL2_ttf dev package
+- ImageMagick (recommended — same caveat as macOS)
 
-### Build steps
+### Install (Debian / Ubuntu)
 
-TBD
+```bash
+sudo apt update
+sudo apt install cmake build-essential libsdl2-dev libsdl2-ttf-dev imagemagick
+```
 
-### Run steps
+### Install (Fedora / RHEL)
 
-TBD
+```bash
+sudo dnf install cmake gcc-c++ SDL2-devel SDL2_ttf-devel ImageMagick
+```
+
+### LVGL setup (fresh clone)
+
+```bash
+# from repo root
+mkdir -p third_party
+git clone https://github.com/lvgl/lvgl.git third_party/lvgl
+cd third_party/lvgl
+git checkout <LVGL_TARGET_TAG>
+```
+
+### Build
+
+```bash
+cmake -S tools/screen_runner \
+      -B tools/screen_runner/build \
+      -DLVGL_ROOT="$PWD/third_party/lvgl"
+cmake --build tools/screen_runner/build -j
+```
+
+If CMake cannot auto-detect SDL2 or SDL2_ttf, add:
+
+```bash
+-DCMAKE_PREFIX_PATH="/usr"
+```
+
+### Run
+
+```bash
+tools/screen_runner/build/screen_runner [tools/scenarios.json]
+```
 
 ---
 
 ## Windows
 
-### Dependencies
+The recommended path on Windows is **MSYS2 with the MINGW64 environment**, which provides a Unix-like shell and the same SDL2 packages used on macOS/Linux.
 
-TBD
+### Install MSYS2
 
-### Build steps
+1. Download and install MSYS2 from [msys2.org](https://www.msys2.org).
+2. Open the **MSYS2 MINGW64** shell (not UCRT64 or CLANG64).
 
-TBD
+### Install dependencies
 
-### Run steps
+```bash
+pacman -Syu
+pacman -S mingw-w64-x86_64-cmake \
+          mingw-w64-x86_64-ninja \
+          mingw-w64-x86_64-SDL2 \
+          mingw-w64-x86_64-SDL2_ttf \
+          mingw-w64-x86_64-imagemagick
+```
 
-TBD
+### LVGL setup (fresh clone)
+
+```bash
+# from repo root
+mkdir -p third_party
+git clone https://github.com/lvgl/lvgl.git third_party/lvgl
+cd third_party/lvgl
+git checkout <LVGL_TARGET_TAG>
+```
+
+### Build
+
+Run from the repo root inside the MSYS2 MINGW64 shell:
+
+```bash
+cmake -S tools/screen_runner \
+      -B tools/screen_runner/build \
+      -G Ninja \
+      -DLVGL_ROOT="$PWD/third_party/lvgl" \
+      -DCMAKE_PREFIX_PATH="/mingw64"
+cmake --build tools/screen_runner/build -j
+```
+
+### Run
+
+```bash
+tools/screen_runner/build/screen_runner.exe [tools/scenarios.json]
+```
+
+> The SDL2 DLLs (`SDL2.dll`, `SDL2_ttf.dll`) must be on `PATH` or copied next to the binary. MSYS2 installs them to `/mingw64/bin`; the simplest fix is to run from the MSYS2 MINGW64 shell, which already includes that directory in `PATH`.
 
 ---
 
 ## Notes
 
-- Scenario source of truth: `../scenarios.json`
-- This doc will be updated as soon as the first macOS runner target lands.
+- Scenario source of truth: `tools/scenarios.json` (relative to repo root)
+- OpenSans fonts and the SeedSigner logo are sourced from `components/seedsigner/assets/` and copied to the build directory at build time by CMake post-build steps.
