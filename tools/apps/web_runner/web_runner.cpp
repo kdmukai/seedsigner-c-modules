@@ -246,6 +246,18 @@ EMSCRIPTEN_KEEPALIVE void ss_set_input_mode(int mode) {
     }
 }
 
+// Static-render mode: makes animated screens compose their still / final frame — the opening
+// splash settles to its final state, cursors freeze, etc. — instead of animating from frame 0.
+// The SAME flag the screenshot generator sets (seedsigner_lvgl_set_static_render). The web
+// gallery turns it ON (it is a still corpus); the interactive web runner leaves it OFF. Re-render
+// so it takes effect on the current screen (a no-op when set before the first load).
+EMSCRIPTEN_KEEPALIVE void ss_set_static_render(int enabled) {
+    seedsigner_lvgl_set_static_render(enabled != 0);
+    if (!g_cur_screen.empty()) {
+        try { runner_core::load_screen(g_cur_screen, g_cur_json); } catch (...) {}
+    }
+}
+
 // Inject a one-shot LVGL key (LV_KEY_* nav code, or aux char '1'/'2'/'3').
 // Used by the on-screen D-pad / center / side buttons in the HTML chrome.
 EMSCRIPTEN_KEEPALIVE void ss_send_key(int lv_key) {

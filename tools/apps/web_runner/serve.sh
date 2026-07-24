@@ -21,24 +21,39 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Repo root is three levels up: tools/apps/web_runner -> tools/apps -> tools -> repo.
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 PORT="${1:-8000}"
-SERVE_DIR="${SCRIPT_DIR}/build-wasm"
+# The emscripten build output (the bundle: index.html web runner + index.js/.wasm).
+BUNDLE_DIR="${SCRIPT_DIR}/build-wasm"
+# The assembled site we actually serve — the SAME layout GitHub Pages publishes (the web
+# gallery at the root /, the web runner at /runner/), so local dev and Pages are structurally
+# identical and relative links (e.g. the gallery's runner/ jump) behave the same in both.
+SITE_DIR="${SCRIPT_DIR}/site"
+SERVE_DIR="${SITE_DIR}"
 SCENARIOS="${REPO_ROOT}/tools/scenarios/scenarios.json"
 
-if [ ! -f "${SERVE_DIR}/index.html" ]; then
-  echo "No build found at ${SERVE_DIR}/index.html — run 'bash tools/apps/web_runner/build.sh' first." >&2
+if [ ! -f "${BUNDLE_DIR}/index.html" ]; then
+  echo "No build found at ${BUNDLE_DIR}/index.html — run 'bash tools/apps/web_runner/build.sh' first." >&2
   exit 1
 fi
 
 # Regenerate the localized scenario catalogs from scenarios.json and re-stage the
-# served assets. Runtime-fetched, so the browser just needs a hard-refresh.
+# served assets into BOTH app dirs (the gallery at the root + /runner/ each carry their own
+# assets/, like the deployed site). Runtime-fetched, so the browser just needs a hard-refresh.
 regen() {
   if python3 "${REPO_ROOT}/tools/i18n/gen_localized_scenarios.py" >/dev/null 2>&1 \
-     && python3 "${SCRIPT_DIR}/stage_assets.py" --dest "${SERVE_DIR}" >/dev/null 2>&1; then
+     && python3 "${SCRIPT_DIR}/stage_assets.py" --dest "${SITE_DIR}"        >/dev/null 2>&1 \
+     && python3 "${SCRIPT_DIR}/stage_assets.py" --dest "${SITE_DIR}/runner" >/dev/null 2>&1; then
     echo "[$(date +%H:%M:%S)] regenerated localized catalogs + re-staged — hard-refresh the browser"
   else
     echo "[$(date +%H:%M:%S)] regenerate FAILED — check tools/scenarios/scenarios.json (valid JSON?)" >&2
   fi
 }
+
+# Assemble the served site from the freshly-built bundle (mirrors CI's assemble-site).
+# Re-copy the gallery shell into the bundle first so a gallery.html source edit is picked
+# up on a serve restart without a full WASM rebuild. assemble-site rm's + rebuilds
+# SITE_DIR, so run it ONCE here; regen only re-stages assets (no rebuild) thereafter.
+cp "${SCRIPT_DIR}/gallery.html" "${BUNDLE_DIR}/"
+( cd "$REPO_ROOT" && scripts/ci/ci.sh assemble-site "$SITE_DIR" >/dev/null )
 
 # Stage once so the served assets match the current scenarios.json.
 regen
@@ -48,17 +63,17 @@ lan_ip="$(hostname -I 2>/dev/null | tr ' ' '\n' \
   | grep -E '^(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01]))\.' \
   | grep -vE '^172\.1[78]\.' | head -1 || true)"
 
-echo "Serving ${SERVE_DIR} on 0.0.0.0:${PORT}"
-echo "  Local:   http://localhost:${PORT}/index.html"
-[ -n "$lan_ip" ] && echo "  LAN:     http://${lan_ip}:${PORT}/index.html"
+echo "Serving ${SITE_DIR} on 0.0.0.0:${PORT}  (gallery / · runner /runner/)"
+echo "  Local:   http://localhost:${PORT}/"
+[ -n "$lan_ip" ] && echo "  LAN:     http://${lan_ip}:${PORT}/"
 
 # Tailnet URLs (MagicDNS name preferred, IP as fallback).
 if command -v tailscale >/dev/null 2>&1; then
   ts_name="$(tailscale status --self --json 2>/dev/null \
     | python3 -c "import sys,json; print(json.load(sys.stdin).get('Self',{}).get('DNSName','').rstrip('.'))" 2>/dev/null || true)"
   ts_ip="$(tailscale ip -4 2>/dev/null | head -1 || true)"
-  [ -n "$ts_name" ] && echo "  Tailnet: http://${ts_name}:${PORT}/index.html"
-  [ -n "$ts_ip" ]   && echo "  Tailnet: http://${ts_ip}:${PORT}/index.html"
+  [ -n "$ts_name" ] && echo "  Tailnet: http://${ts_name}:${PORT}/"
+  [ -n "$ts_ip" ]   && echo "  Tailnet: http://${ts_ip}:${PORT}/"
 fi
 
 # Serve in the background so we can watch alongside; clean it up on exit.

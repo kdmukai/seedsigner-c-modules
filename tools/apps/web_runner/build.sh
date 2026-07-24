@@ -80,12 +80,13 @@ echo "==> Staging runtime assets (scenarios + font packs + locale index)"
 python3 "${SCRIPT_DIR}/stage_assets.py" --dest "${SCRIPT_DIR}/build-wasm"
 
 # The web gallery is a SECOND static shell over the same engine (index.js/.wasm) + assets/.
-# It isn't built by emscripten (no --shell-file), so just drop it beside the bundle; served
-# locally at /gallery.html.
+# It isn't built by emscripten (no --shell-file), so just drop it beside the bundle;
+# serve.sh assembles it into /gallery/ (the same 3-dir layout GitHub Pages publishes).
 echo "==> Staging web gallery shell (gallery.html)"
 cp "${SCRIPT_DIR}/gallery.html" "${SCRIPT_DIR}/build-wasm/"
 
 echo ""
 echo "==> Done: ${REPO_ROOT}/tools/apps/web_runner/build-wasm/  (index.html + .js + .wasm + assets/)"
-echo "    Multi-file bundle — serve it over HTTP (file:// won't fetch assets):"
+echo "    serve.sh assembles this bundle into the Pages-identical site (gallery at / ·"
+echo "    runner at /runner/) and serves it over HTTP (file:// won't fetch assets):"
 echo "      bash tools/apps/web_runner/serve.sh"

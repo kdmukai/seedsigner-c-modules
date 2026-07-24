@@ -76,6 +76,8 @@ tools/apps/screen_runner/build-asan/screen_runner
 # Web runner (WASM) build output
 tools/apps/web_runner/build-wasm/
 tools/apps/web_runner/build/
+# Assembled dev site (serve.sh mirrors CI's assemble-site into here: / + /play/ + /gallery/)
+tools/apps/web_runner/site/
 # Persistent build caches (ccache + Emscripten port cache)
 tools/apps/web_runner/.ccache/
 tools/apps/web_runner/.emcache/
