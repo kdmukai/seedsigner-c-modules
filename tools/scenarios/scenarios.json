@@ -1034,6 +1034,7 @@
     "context": {
       "top_nav": { "title": "Verify Send Address", "show_back_button": true },
       "btc_amount": { "primary": "0.00841234", "unit": "btc", "network": "M" },
+      "network": "M",
       "address": "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
       "button_list": ["Next"]
     },
@@ -1056,6 +1057,7 @@
         "name": "testnet",
         "context": {
           "btc_amount": { "primary": "841,234", "unit": "tSats", "network": "T" },
+          "network": "T",
           "address": "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx"
         }
       },
@@ -1063,6 +1065,7 @@
         "name": "regtest",
         "context": {
           "btc_amount": { "primary": "841,234", "unit": "tSats", "network": "R" },
+          "network": "R",
           "address": "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080"
         }
       }
