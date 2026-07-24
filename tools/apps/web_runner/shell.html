@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>SeedSigner LVGL Screen Playground</title>
+<title>Web Runner &mdash; SeedSigner LVGL Screens</title>
 <style>
   :root {
     --bg: #121212; --panel: #1a1a1a; --panel2: #222; --line: #303030;
@@ -13,10 +13,16 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 17px; }
-  header { display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; padding: 12px 16px;
     border-bottom: 1px solid var(--line); background: var(--panel); }
-  header .brand { color: var(--accent); font-weight: 700; font-size: 18px; }
-  header .rest { color: var(--dim); font-size: 16px; }
+  header .brand { color: var(--accent); font-weight: 700; font-size: 18px; text-decoration: none; }
+  header a.brand:hover { opacity: .85; }
+  header .rest { color: var(--dim); font-size: 16px; margin-right: auto; }
+  /* Display-setting selectors (language / resolution / input) sit in the header in the
+     SAME position as the screen gallery so the two tools read as one UI: a small
+     flex-column label above each select, pushed to the right by .rest's auto margin. */
+  header label { display: flex; flex-direction: column; gap: 3px; font-size: 14px; }
+  header select { min-width: 130px; }
 
   /* Responsive: side-by-side columns when there's room, stacked otherwise
      (JSON editor flows to the bottom of the single column when it wraps). */
@@ -96,9 +102,9 @@
   .sidekeys button { width: 68px; height: 44px; font-size: 15px; }
   .hw-control.hidden { display: none; }
 
-  /* Normal view: the display selectors sit inline in the bar (as before); the
-     ⚙ gear is hidden. In fullscreen they collapse behind the gear (pinned
-     top-left) as an overlay popout, reclaiming vertical space (phone landscape). */
+  /* Normal view: zoom sits inline in the bar; the ⚙ gear is hidden. In fullscreen it
+     collapses behind the gear (pinned top-left) as an overlay popout, reclaiming
+     vertical space (phone landscape). Language / resolution / input live in the header. */
   #settings-btn { display: none; }
   #settings-panel { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
   /* Only collapse the selectors behind the ⚙ popout when fullscreen vertical
@@ -153,19 +159,37 @@
 </head>
 <body>
 <header>
-  <span class="brand">SeedSigner</span>
-  <span class="rest">LVGL Screen Playground &mdash; live JSON &amp; interactive</span>
+  <a class="brand" href="../" title="Back to the gallery">SeedSigner LVGL Screens</a>
+  <span class="rest">Web Runner &mdash; live screen interactivity, configurable JSON context</span>
+  <!-- Display settings live in the header, in the SAME position as the screen gallery,
+       so the two tools read as one UI. Screen + scenario pickers (web-runner-only) are
+       in the card below; zoom stays by the stage. IDs are unchanged — the JS finds
+       these by id regardless of where they sit. -->
+  <label>Language
+    <select id="locale-select"></select>
+  </label>
+  <label>Resolution
+    <select id="res-select">
+      <option value="240x240">240 × 240</option>
+      <option value="320x240">320 × 240</option>
+      <option value="480x320">480 × 320</option>
+      <option value="800x480">800 × 480</option>
+    </select>
+  </label>
+  <label>Input
+    <select id="mode-select">
+      <option value="1">Hardware</option>
+      <option value="0">Touch</option>
+    </select>
+  </label>
 </header>
 
 <main>
  <div class="col-main">
-  <!-- 1. Screen & scenario selectors -->
+  <!-- 1. Screen & scenario selectors (language / resolution / input are in the header) -->
   <div class="card">
     <h2>Screen &amp; scenario</h2>
     <div class="row">
-      <label>Language
-        <select id="locale-select"></select>
-      </label>
       <label>Screen
         <select id="screen-select"></select>
       </label>
@@ -180,20 +204,6 @@
     <div id="top-bar" class="row" style="justify-content:center; position:relative;">
       <button id="settings-btn" title="Display settings" aria-expanded="false">⚙ Settings</button>
       <div id="settings-panel" class="hidden">
-        <label>Resolution
-          <select id="res-select">
-            <option value="240x240">240 × 240</option>
-            <option value="320x240">320 × 240</option>
-            <option value="480x320">480 × 320</option>
-            <option value="800x480">800 × 480</option>
-          </select>
-        </label>
-        <label>Input mode
-          <select id="mode-select">
-            <option value="1">Hardware (keys)</option>
-            <option value="0">Touch (mouse)</option>
-          </select>
-        </label>
         <label>Zoom
           <select id="zoom-select">
             <option value="1" selected>1×</option>
@@ -276,6 +286,12 @@
     loadScreen: null, setResolution: null, setInputMode: null, sendKey: null, scroll: null,
   };
 
+  // SDL (emscripten) clobbers document.title with the SDL window title ("seedsigner-web") when
+  // main() creates the window — AFTER the HTML <title> renders, so the tab shows the right title
+  // then reverts. Capture our intended title now and re-assert it in ssOnReady (fired at the end
+  // of main(), the same synchronous task as the clobber, so it wins before any repaint — no flash).
+  var PAGE_TITLE = document.title;
+
   var Module = {
     canvas: document.getElementById('canvas'),
     print:   function (t) { console.log(t); },
@@ -343,6 +359,7 @@
   // ---- Hooks called from C (web_runner.cpp) ----
   window.ssOnReady = function (w, h) {
     app.displayW = w; app.displayH = h;
+    document.title = PAGE_TITLE;   // re-assert our tab title (SDL clobbered it — see PAGE_TITLE)
     app.loadScreen    = Module.cwrap('ss_load_screen', 'number', ['string', 'string']);
     app.setResolution = Module.cwrap('ss_set_resolution', null, ['number', 'number']);
     app.setPresentRotation = Module.cwrap('ss_set_present_rotation', null, ['number']);

@@ -150,7 +150,7 @@ case "$COMMAND" in
   # ---------------------------------------------------------------------------
 
   build-web-runner)
-    # Build the browser (WASM) playground. Emscripten's emcmake/em++ must be on
+    # Build the browser (WASM) web runner. Emscripten's emcmake/em++ must be on
     # PATH (the CI workflow provides them via mymindstorm/setup-emsdk). Optional
     # display dimensions can be passed through, e.g. -DDISPLAY_WIDTH=480 ...
     #
@@ -226,38 +226,35 @@ PY
 
   assemble-site)
     # Assemble the full Pages site from already-built outputs:
-    #   <site>/             simple landing page (links Gallery + Playground)
-    #   <site>/gallery/     the on-the-fly web gallery (renders the whole corpus live)
-    #   <site>/play/        the interactive web runner playground
-    # Both apps are the SAME WASM engine (index.{js,wasm}) + the SAME runtime assets/
-    # (scenario catalogs + font packs + locale index); they differ only in their HTML shell
-    # (index.html = playground, gallery.html = gallery). The pre-rendered PNG screenshot
-    # gallery is deliberately NO LONGER deployed — the web gallery renders on the fly, and the
-    # headless screenshot generator's output is now a regression artifact only (see
-    # docs/web-gallery-todo.md + docs/reenable-screenshot-diff-ci-todo.md).
+    #   <site>/             the web gallery (renders the whole corpus live) — the SITE ROOT
+    #   <site>/runner/      the interactive web runner (one screen, live JSON)
+    # The web runner is reachable from the gallery (click any screen to test it live), so the
+    # gallery IS the root — there is no separate landing page. Both apps are the SAME WASM
+    # engine (index.{js,wasm}) + the SAME runtime assets/ (scenario catalogs + font packs +
+    # locale index); they differ only in their HTML shell (gallery.html at the root, the
+    # runner's index.html in /runner/). Each is a self-contained directory (no cross-directory
+    # fetches). The pre-rendered PNG screenshot gallery is deliberately NO LONGER deployed —
+    # the web gallery renders on the fly, and the headless screenshot generator's output is now
+    # a regression artifact only (see docs/web-gallery-todo.md + docs/reenable-screenshot-diff-ci-todo.md).
     # Deployed atomically by the official Pages action. Usage: ci.sh assemble-site [DIR]
     SITE_DIR="${1:-site}"
     BUILD=tools/apps/web_runner/build-wasm
     rm -rf "$SITE_DIR"
-    mkdir -p "$SITE_DIR/play" "$SITE_DIR/gallery"
+    mkdir -p "$SITE_DIR/runner"
 
-    # Landing page at the root.
-    cp tools/apps/web_runner/landing.html "$SITE_DIR/index.html"
+    # / — the web gallery shell (as index.html) + engine + assets, at the site root.
+    cp "$BUILD/gallery.html" "$SITE_DIR/index.html"
+    cp "$BUILD/index.js"     "$SITE_DIR/"
+    cp "$BUILD/index.wasm"   "$SITE_DIR/"
+    cp -r "$BUILD/assets"    "$SITE_DIR/"
 
-    # /play/ — the playground shell + engine + assets.
-    cp "$BUILD/index.html" "$SITE_DIR/play/"
-    cp "$BUILD/index.js"   "$SITE_DIR/play/"
-    cp "$BUILD/index.wasm" "$SITE_DIR/play/"
-    cp -r "$BUILD/assets"  "$SITE_DIR/play/"
+    # /runner/ — the web runner shell + engine + assets.
+    cp "$BUILD/index.html" "$SITE_DIR/runner/"
+    cp "$BUILD/index.js"   "$SITE_DIR/runner/"
+    cp "$BUILD/index.wasm" "$SITE_DIR/runner/"
+    cp -r "$BUILD/assets"  "$SITE_DIR/runner/"
 
-    # /gallery/ — the gallery shell (as index.html) over a COPY of the same engine + assets,
-    # so each app is a self-contained directory (no cross-directory fetches).
-    cp "$BUILD/gallery.html" "$SITE_DIR/gallery/index.html"
-    cp "$BUILD/index.js"     "$SITE_DIR/gallery/"
-    cp "$BUILD/index.wasm"   "$SITE_DIR/gallery/"
-    cp -r "$BUILD/assets"    "$SITE_DIR/gallery/"
-
-    echo "Assembled site at $SITE_DIR (landing at /, gallery at /gallery/, playground at /play/)"
+    echo "Assembled site at $SITE_DIR (gallery at /, runner at /runner/)"
     ;;
 
   screenshot-diff-summary)
@@ -279,7 +276,7 @@ else:
       echo "No comparison result was produced."
     fi
     echo ""
-    echo "Download the **screenshot-diff** artifact (HTML report) and the **site** artifact (open \`index.html\` / \`play/index.html\` locally) to review."
+    echo "Download the **screenshot-diff** artifact (HTML report) and the **site** artifact (open \`index.html\` / \`runner/index.html\` locally) to review."
     ;;
 
 
@@ -379,7 +376,7 @@ else:
     echo "  package-screen-runner [DIR]      Package build outputs into artifact dir"
     echo ""
     echo "Web runner (WASM) commands:"
-    echo "  build-web-runner [CMAKE_ARGS]    Build the browser playground (needs emcmake on PATH)"
+    echo "  build-web-runner [CMAKE_ARGS]    Build the browser web runner (needs emcmake on PATH)"
     echo "  package-web-runner [DIR]         Copy the single-file bundle into a deploy dir"
     echo ""
     echo "Headless test commands:"

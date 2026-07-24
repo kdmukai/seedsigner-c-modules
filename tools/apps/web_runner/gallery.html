@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SeedSigner LVGL Screen Gallery</title>
+<title>Web Gallery &mdash; SeedSigner LVGL Screens</title>
 <!--
   web_gallery — on-the-fly, in-browser render of the WHOLE scenario corpus at one
   language × one resolution. It is a SECOND SHELL over the exact same WASM engine the
-  interactive playground uses: it loads index.js / index.wasm (built from web_runner.cpp)
+  interactive web runner uses: it loads index.js / index.wasm (built from web_runner.cpp)
   and drives the same ss_* C API, sharing the same assets/ (scenario catalogs + font
   packs). No separate build — see docs/web-gallery-todo.md.
 
@@ -18,7 +18,8 @@
   How each cell is produced: expand the scenario's context client-side → ss_load_screen
   (ticks + renders synchronously) → read the RGB565 framebuffer straight from the WASM
   heap → expand to RGBA on an offscreen 2D canvas → drop that canvas into the grid at
-  native device size. Click a cell to download it as a PNG (for a PR / issue).
+  native device size. Click a cell to open that screen + scenario in the interactive
+  web runner (deep-linked); right-click a cell for the browser's native Save-image-as PNG.
 -->
 <style>
   :root {
@@ -34,9 +35,6 @@
     position: sticky; top: 0; z-index: 10; }
   header .brand { color: var(--accent); font-weight: 700; font-size: 18px; }
   header .rest { color: var(--dim); font-size: 15px; margin-right: auto; }
-  header a { color: var(--dim); text-decoration: none; border: 1px solid var(--line);
-    border-radius: 6px; padding: 6px 10px; font-size: 14px; }
-  header a:hover { border-color: #555; color: var(--text); }
 
   label { font-size: 14px; color: var(--dim); display: flex; flex-direction: column; gap: 3px; }
   select { font: inherit; color: var(--text); background: var(--panel2);
@@ -56,9 +54,16 @@
   figure canvas { display: block; image-rendering: pixelated; background: #000;
     border-radius: 3px; cursor: pointer; }
   figure.err { outline: 1px solid var(--err); }
-  figcaption { font-size: 12.5px; line-height: 1.35; text-align: center; word-break: break-word; }
-  figcaption .screen { color: var(--text); font-weight: 600; }
-  figcaption .scenario { color: var(--dim); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  /* Landscape-only screens on a square target: a blank box sized to the panel with a short
+     explanation, shown in place of a (wrong) render. */
+  figure .ph-note { display: flex; align-items: center; justify-content: center; text-align: center;
+    padding: 12px; color: var(--dim); font-size: 13px; line-height: 1.4; background: #000;
+    border: 1px dashed var(--line); border-radius: 3px; }
+  /* Caption sits ABOVE the screen — larger so screen name + scenario are easy to scan. */
+  figcaption { font-size: 14px; line-height: 1.3; text-align: center; word-break: break-word; }
+  figcaption .screen { color: var(--text); font-weight: 700; font-size: 16px; }
+  figcaption .scenario { color: var(--dim); font-size: 13px;
+    font-family: ui-monospace, Menlo, Consolas, monospace; }
 
   /* Off-screen host canvas for the SDL/WebGL engine. It renders here; we never look at
      it — every visible cell is painted from the RGB565 framebuffer instead. */
@@ -68,8 +73,8 @@
 </head>
 <body>
 <header>
-  <span class="brand">SeedSigner</span>
-  <span class="rest">LVGL Screen Gallery &mdash; every screen, rendered live</span>
+  <span class="brand">SeedSigner LVGL Screens</span>
+  <span class="rest">Web Gallery &mdash; every screen, rendered live</span>
   <label>Language
     <!-- Pre-seeded with English so the selector shows a sensible default from the first
          paint (never a blank <select> during the locales.json fetch); loadLocales() clears
@@ -84,7 +89,15 @@
       <option value="800x480">800 × 480</option>
     </select>
   </label>
-  <a href="index.html" title="Open the interactive playground">Playground &rarr;</a>
+  <label>Input
+    <!-- Input mode changes how screens build: hardware shows the focus/selection
+         highlight (how the on-device keypad UI looks), touch shows none. Default
+         hardware = the engine default and the historical PNG-gallery look. -->
+    <select id="mode-select">
+      <option value="1">Hardware</option>
+      <option value="0">Touch</option>
+    </select>
+  </label>
 </header>
 
 <div id="status">Loading engine&hellip;</div>
@@ -98,10 +111,15 @@
     ready: false,
     locale: 'en',
     displayW: 240, displayH: 240,
-    loadScreen: null, setResolution: null, setPresentRotation: null,
+    loadScreen: null, setResolution: null, setInputMode: null, setStaticRender: null, setPresentRotation: null,
     getWidth: null, getHeight: null, getFramebuffer: null,
     registerManifest: null, packFiles: null, stageBlob: null, stageEndonym: null, loadStaged: null,
   };
+  // SDL (emscripten) clobbers document.title with the SDL window title ("seedsigner-web") when
+  // main() creates the window — AFTER the HTML <title> renders, so the tab shows the right title
+  // then reverts. Capture our intended title now and re-assert it in ssOnReady (fired at the end
+  // of main(), the same synchronous task as the clobber, so it wins before any repaint — no flash).
+  var PAGE_TITLE = document.title;
   // Bumped on every slice (re)render; an in-flight loop checks it and bails when
   // superseded, so a fast dropdown change can't leave two renders interleaving.
   var renderToken = 0;
@@ -122,7 +140,7 @@
   }
 
   // ---- Scenario catalog (fetched per locale, expanded client-side) ----
-  // Same RFC 7396 merge-patch the C runner_core and the playground use, so a scenario /
+  // Same RFC 7396 merge-patch the C runner_core and the web runner use, so a scenario /
   // translation edit is a static-file swap with no rebuild.
   function mergePatch(target, patch) {
     if (patch && typeof patch === 'object' && !Array.isArray(patch)) {
@@ -157,7 +175,7 @@
     return cat;
   }
 
-  // ---- Framebuffer capture (identical primitive to the playground's download button) ----
+  // ---- Framebuffer capture (identical primitive to the web runner's download button) ----
   // Read the RGB565 plane straight from the WASM heap, expand to RGBA with the EXACT
   // shift the SDL present uses (runner_sdl.cpp) so cells match the on-screen pixels.
   // rotateCW presents portrait-authored screens 90° CW into a landscape canvas.
@@ -187,7 +205,7 @@
   }
 
   // ---- Locale packs (option B: JS pre-fetches, the shared loader orchestrates) ----
-  // Byte-for-byte the playground's applyLocaleFonts: fetch each pack file the render
+  // Byte-for-byte the web runner's applyLocaleFonts: fetch each pack file the render
   // layer asks for (ss_pack_files), stage them all, then ss_load_staged once. Latin
   // locales get an empty list and fall back to the compiled-in OpenSans floor.
   var fontCache = {};     // 'locale/file' -> Uint8Array
@@ -231,7 +249,7 @@
 
   // The locale picker draws each language's name from a pre-rendered endonym IMAGE
   // (no runtime font); those blobs must be staged before the screen builds. Fetch every
-  // one the scenario references, then stage them in one flush (mirrors the playground).
+  // one the scenario references, then stage them in one flush (mirrors the web runner).
   async function stagePickerEndonyms(ctx) {
     var rows = (ctx && ctx.rows) || [];
     var H = app.displayH, needed = [];
@@ -272,16 +290,47 @@
   // Build one grid cell: set orientation, load the screen, paint its framebuffer into a
   // canvas, and append it with a caption. Returns nothing; appends to #grid. Assumes
   // fonts for app.locale are already loaded.
-  async function renderCell(fn, entry) {
+  async function renderCell(fn, entry, mode, landscapeOnly) {
+    var fig = document.createElement('figure');
+
+    // Caption ABOVE the screen (screen name + scenario), larger for at-a-glance scanning.
+    var cap = document.createElement('figcaption');
+    cap.innerHTML = '<span class="screen"></span><br><span class="scenario"></span>';
+    cap.querySelector('.screen').textContent = fn;
+    cap.querySelector('.scenario').textContent = entry.name;
+    fig.appendChild(cap);
+
+    // Landscape-only screens (portrait-authored, presented rotated) render wrong on a square
+    // panel, so at a square resolution we show a blank placeholder cell IN PLACE — not hidden,
+    // not (mis)rendered — with a short explanation. No engine work for these.
+    if (landscapeOnly) {
+      fig.classList.add('landscape-only');
+      var note = document.createElement('div');
+      note.className = 'ph-note';
+      note.style.width  = app.displayW + 'px';
+      note.style.height = app.displayH + 'px';
+      note.textContent = 'Landscape-only screen';
+      fig.appendChild(note);
+      document.getElementById('grid').appendChild(fig);
+      return;
+    }
+
     // Orientation must be applied BEFORE the load so the screen builds in the right frame.
     app.setPresentRotation(entry.rotate ? 1 : 0);
     // The picker needs its endonym images staged first (async fetch).
     if (fn === 'locale_picker_screen') {
       try { await stagePickerEndonyms(entry.context); } catch (e) { /* fall back to live text */ }
     }
+    // Re-assert the gallery's input mode right before building THIS screen. Screens share
+    // the engine's single global input mode; a prior cell may have changed it (io_test_screen
+    // forces hardware and never restores), so without this every screen after the offender
+    // renders in the wrong mode. (Costs one redundant re-render of the previous screen inside
+    // ss_set_input_mode — cheap, and never captured.)
+    if (app.setInputMode && (mode === 0 || mode === 1)) app.setInputMode(mode);
     // Load ticks+renders once; ss_render_now() settles the frame synchronously (one pass
-    // doesn't flush the whole framebuffer at larger sizes / for load transitions) so the
-    // full screen is painted before we capture.
+    // doesn't flush the whole framebuffer at larger sizes / for load transitions) so the full
+    // screen is painted before we capture. Static mode (set once on ready) makes animated
+    // screens compose their still/final frame — e.g. the opening splash's settled final state.
     var rc;
     try {
       rc = app.loadScreen(fn, JSON.stringify(entry.context));
@@ -289,37 +338,29 @@
     } catch (e) { rc = -1; }
     var canvas = (rc === 1) ? paintFramebuffer(!!entry.rotate) : null;
 
-    var fig = document.createElement('figure');
     if (canvas) {
       // Present at native device pixels (the canvas' own width/height); no CSS scaling.
-      canvas.title = 'Click to download PNG';
-      canvas.addEventListener('click', function () { downloadCell(fn, entry, canvas); });
+      // Click a cell to open THAT screen + scenario in the web runner (deep-linked) and test
+      // it live. Right-click still gives the browser's native "Save image as" for a quick PNG,
+      // which is why the click is free to navigate. Modifier / middle click opens a new tab.
+      canvas.title = 'Click to test this screen live · right-click to save as PNG';
+      var href = runnerUrl(fn, entry);
+      canvas.addEventListener('click', function (e) {
+        if (e.ctrlKey || e.metaKey || e.shiftKey) window.open(href, '_blank');
+        else window.location.href = href;
+      });
+      canvas.addEventListener('auxclick', function (e) {
+        if (e.button === 1) { e.preventDefault(); window.open(href, '_blank'); }
+      });
       fig.appendChild(canvas);
     } else {
-      fig.className = 'err';
+      fig.classList.add('err');
       var ph = document.createElement('div');
       ph.style.cssText = 'color:var(--err);font-size:12px;padding:20px;text-align:center;';
       ph.textContent = (rc === 0) ? 'unknown screen' : 'render failed';
       fig.appendChild(ph);
     }
-    var cap = document.createElement('figcaption');
-    cap.innerHTML = '<span class="screen"></span><br><span class="scenario"></span>';
-    cap.querySelector('.screen').textContent = fn;
-    cap.querySelector('.scenario').textContent = entry.name;
-    fig.appendChild(cap);
     document.getElementById('grid').appendChild(fig);
-  }
-
-  function downloadCell(fn, entry, canvas) {
-    var name = [fn, entry.name, app.displayW + 'x' + app.displayH, app.locale]
-                 .join('__').replace(/[^0-9A-Za-z_.-]+/g, '_');
-    canvas.toBlob(function (blob) {
-      if (!blob) return;
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob); a.download = name + '.png';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
-    }, 'image/png');
   }
 
   // Render the whole current slice (one locale × one resolution). Cancels any in-flight
@@ -349,47 +390,79 @@
     // Flatten to a work list (screens alphabetical; base scenario first per screen).
     // render_as_landscape screens (portrait-authored, presented rotated to landscape — the
     // pillarboxed camera chrome) are landscape-ONLY: they have no meaning on a square panel
-    // like the Pi Zero 240×240 and render wrong there. Drop them when the target is square.
+    // like the Pi Zero 240×240 and render wrong there. On a square target we keep them in
+    // sequence but render a BLANK placeholder cell (marked here) rather than a wrong render.
     var isSquare = app.displayW === app.displayH;
-    var cells = [], hiddenLandscapeOnly = 0;
+    var cells = [];
     Object.keys(catalog).sort().forEach(function (fn) {
       (catalog[fn] || []).forEach(function (entry) {
-        if (isSquare && entry.rotate) { hiddenLandscapeOnly++; return; }
-        cells.push({ fn: fn, entry: entry });
+        cells.push({ fn: fn, entry: entry, landscapeOnly: isSquare && !!entry.rotate });
       });
     });
+
+    // Resolve the selected input mode for this slice; renderCell re-asserts it before
+    // building EACH cell (hardware shows the focus/selection highlight, touch shows none).
+    // Per-cell — not once here — because every screen shares the engine's single global
+    // input mode, and some screens force their own while building (io_test_screen forces
+    // hardware and never restores it). Setting it once would let that leak into every cell
+    // rendered after the offender; re-asserting per cell makes each render honor the selector.
+    var mode = (document.getElementById('mode-select').value === '0') ? 0 : 1;
 
     var res = app.displayW + '×' + app.displayH;
     for (var i = 0; i < cells.length; i++) {
       if (token !== renderToken) return;   // superseded by a newer slice
       setStatus('Rendering ' + (i + 1) + ' / ' + cells.length + '  •  ' + localeLabel + '  •  ' + res);
-      await renderCell(cells[i].fn, cells[i].entry);
+      await renderCell(cells[i].fn, cells[i].entry, mode, cells[i].landscapeOnly);
       if (i % BATCH === BATCH - 1) { await raf(); }
     }
     if (token !== renderToken) return;
     setStatus(cells.length + ' screens  •  ' + localeLabel + '  •  ' + res +
-              (hiddenLandscapeOnly ? '  •  ' + hiddenLandscapeOnly + ' landscape-only hidden (square target)' : '') +
-              '   (click any screen to download it as a PNG)');
+              '   (click any screen to test its live interactivity · right-click to save as PNG)');
   }
 
-  // ---- Deep-link (res + language survive a refresh / shared link) ----
+  // ---- Deep-link (res + language + input mode survive a refresh / shared link) ----
   function parseUrl() {
     var p = new URLSearchParams(window.location.search);
-    return { lang: p.get('lang'), res: p.get('res') };
+    return { lang: p.get('lang'), res: p.get('res'), mode: p.get('mode') };
   }
   function updateUrl() {
     var p = new URLSearchParams();
     if (app.locale) p.set('lang', app.locale);
     var res = document.getElementById('res-select').value;
     if (res) p.set('res', res);
+    var mode = document.getElementById('mode-select').value;
+    if (mode) p.set('mode', mode);
     window.history.replaceState(null, '', window.location.pathname + '?' + p.toString());
+  }
+
+  // ---- Jump to the interactive web runner (deep-linked) ----
+  // The gallery IS the site root; the web runner lives at runner/ (relative) in BOTH the
+  // deployed site and local dev — serve.sh assembles the SAME layout GitHub Pages does, so
+  // this one relative path is correct everywhere (no per-environment detection).
+  var RUNNER_BASE = 'runner/';
+
+  // Build a web runner deep-link that reopens THIS cell: screen + scenario (by name;
+  // omitted for the default, matching the web runner's own URL scheme) + language +
+  // resolution. The web runner reads these query params on load (parseUrl there).
+  function runnerUrl(fn, entry) {
+    var p = new URLSearchParams();
+    p.set('screen', fn);
+    if (entry.name && entry.name !== '(default)') p.set('scenario', entry.name);
+    if (app.locale) p.set('lang', app.locale);
+    p.set('res', app.displayW + 'x' + app.displayH);
+    var mode = document.getElementById('mode-select').value;
+    if (mode === '0' || mode === '1') p.set('mode', mode);
+    return RUNNER_BASE + '?' + p.toString();
   }
 
   // ---- Engine ready ----
   window.ssOnReady = function (w, h) {
     app.displayW = w; app.displayH = h;
+    document.title = PAGE_TITLE;   // re-assert our tab title (SDL clobbered it — see PAGE_TITLE)
     app.loadScreen         = Module.cwrap('ss_load_screen', 'number', ['string', 'string']);
     app.setResolution      = Module.cwrap('ss_set_resolution', null, ['number', 'number']);
+    app.setInputMode       = Module.cwrap('ss_set_input_mode', null, ['number']);
+    app.setStaticRender    = Module.cwrap('ss_set_static_render', null, ['number']);
     app.setPresentRotation = Module.cwrap('ss_set_present_rotation', null, ['number']);
     app.getWidth           = Module.cwrap('ss_get_width', 'number', []);
     app.getHeight          = Module.cwrap('ss_get_height', 'number', []);
@@ -400,6 +473,11 @@
     app.stageBlob          = Module.cwrap('ss_stage_blob', null, ['string', 'number', 'number']);
     app.stageEndonym       = Module.cwrap('ss_stage_endonym', null, ['string', 'string', 'number', 'number']);
     app.loadStaged         = Module.cwrap('ss_load_staged', 'number', ['string']);
+    // The gallery is a still-corpus (like the screenshot generator): render every screen in
+    // STATIC mode so animated screens compose their representative/final frame — the opening
+    // splash settles to its final state instead of showing the fade-in. The interactive web
+    // runner leaves this OFF (it's a separate WASM instance, so the flag never leaks between them).
+    if (app.setStaticRender) app.setStaticRender(1);
     app.ready = true;
     initUI();
   };
@@ -410,10 +488,11 @@
   function initUI() {
     var localeSel = document.getElementById('locale-select');
     var resSel    = document.getElementById('res-select');
+    var modeSel   = document.getElementById('mode-select');
     var pending   = parseUrl();
 
     // Apply a resolution (engine + font px), returning a promise that resolves once the
-    // locale's packs are re-registered at the new px. Deliberately mirrors the playground:
+    // locale's packs are re-registered at the new px. Deliberately mirrors the web runner:
     // ss_set_resolution resets to landscape and rebuilds the profile with the BAKED fonts,
     // so re-run the loader before rendering or pack glyphs flash as .notdef boxes.
     function applyResolution(res) {
@@ -437,6 +516,11 @@
       applyResolution(this.value).then(renderSlice).catch(function (e) {
         setStatus('Resolution: ' + (e && e.message ? e.message : e), true);
       });
+    });
+    modeSel.addEventListener('change', function () {
+      // Input mode is pure engine state (no font / resolution work); renderSlice
+      // applies the new mode at its start and re-renders every cell.
+      updateUrl(); renderSlice();
     });
 
     // Populate the language dropdown from the shared locale index, then do the first
@@ -468,6 +552,10 @@
           if (ok) startRes = pending.res;
         }
         resSel.value = startRes;
+        // Restore input mode from the URL if valid (default: hardware — the engine
+        // default and how the on-device screenshots look). renderSlice reads mode-select
+        // at its start and applies it, so setting the value here is enough.
+        if (pending.mode === '0' || pending.mode === '1') modeSel.value = pending.mode;
         updateUrl();
         return applyResolution(startRes);
       })
