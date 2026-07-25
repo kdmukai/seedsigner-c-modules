@@ -50,7 +50,7 @@ ESP-specific rendering stays in `esp-board-common`. See its
 | Field | Meaning |
 |---|---|
 | `instructions_text` | Full hardware-mode bottom line; the host composes the whole string (e.g. `"< back  \|  Scan a QR code"`), already localized. Ignored in touch mode. |
-| `square_x/y/w/h` | Preview rect within the parent. The host passes the real geometry. The tooling default is **resolution-dependent**: higher-resolution DSI panels (short dimension > 240 — the 480×320 / 800×480 touch displays) **default to a landscape center-cut square** with static side gutters; the **Pi Zero (≤240) fills the display** (Python `ScanScreen` parity — `render_rect` defaults to the whole canvas). Squaring the DSI panels is intentional, not opt-in: those panels have per-frame update limits along their long axis, so keeping the gutters static minimizes the redrawn long-axis span. `fill_landscape` overrides this in either direction (`true` opts a DSI panel into full landscape width; `false` forces a square on the Pi Zero); `square` sets an explicit rect. |
+| `square_x/y/w/h` | Preview rect within the parent. The host passes the real geometry. The tooling default is **always a centered square of the short display dimension**: the live camera preview is invariably a square center-crop (the OV5647's widest field of view runs along the panel's short axis, so a wider crop cannot add width — image-entropy native contract §7a). On the square Pi Zero (240×240) the square is the whole display; on wider panels (320×240 / 480×320 / 800×480) it is center-cut, leaving static side gutters the live camera never writes (which also respects those panels' per-frame long-axis update limits). There is no full-landscape fill mode; `square` sets an explicit rect. |
 | `scanning_active` | `false` → back affordance; `true` → status bar. |
 | `progress_percent` | 0–100 animated-QR percent. |
 | `frame_status` | `NONE`/`ADDED`/`REPEATED`/`MISS` — most-recent frame, drives the status dot. Mirrors Python `ScanScreen.FRAME__*`. |
@@ -109,13 +109,12 @@ Path B = a real per-frame blend, not black-keyable) owned and measured by
 `camera_preview_overlay_screen` synthesizes a placeholder gray square so the overlay
 renders standalone in all three tools (screenshot generator, native runner, WASM web
 runner) via the shared `runner_core` registry. Scenario JSON drives the state
-(`scanning`, `progress`, `frame_status`, `fill_landscape`, `square`); the preview
-geometry defaults per resolution (DSI panels = center square, Pi Zero = full display),
-and `fill_landscape` overrides either way. The back affordance follows the tool's
-per-resolution input mode (240 = hardware, larger = touch). See
-`tools/scenarios/scenarios.json` → `camera_preview_overlay_screen` (the `force_square`
-variation forces the square at a Pi-class resolution; the `fill_landscape` variation
-forces full landscape width on the DSI panels).
+(`scanning`, `progress`, `frame_status`, `square`); the preview geometry is always a
+centered square of the short display dimension (the whole display on the square Pi
+Zero, center-cut with side gutters on wider panels), with `square` as an explicit
+override. The back affordance follows the tool's per-resolution input mode (240 =
+hardware, larger = touch). See `tools/scenarios/scenarios.json` →
+`camera_preview_overlay_screen`.
 ```
 make_body … screenshot_gen --scenarios-file tools/scenarios/localized/<locale>.json --out-dir <dir>
 ```
