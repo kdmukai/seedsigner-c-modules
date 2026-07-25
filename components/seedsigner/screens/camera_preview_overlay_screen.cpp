@@ -53,12 +53,10 @@
 //            frames; unions with decoded_count. Out-of-order aware (e.g. [3] = middle-first).
 //   just_decoded_index (int, default -1)  0-based currently-read piece; drawn as the
 //            highlighted "current" cell (e.g. the piece a repeated frame is re-reading).
-//   fill_landscape     (bool, default: short display dim <= 240)  preview geometry.
-//            Higher-res DSI panels (short dim > 240) default false = a center-cut
-//            SQUARE with static side gutters; the Pi Zero (<= 240) defaults true =
-//            fill the display. Set either way to override the per-resolution default.
-//   square             (object {x,y,w,h}, optional)  explicit preview-square rect;
-//            overrides the fill_landscape-derived rect in whole or per-field.
+//   square             (object {x,y,w,h}, optional)  explicit preview-square rect,
+//            overriding the centered-square default in whole or per-field. The preview
+//            is ALWAYS a centered square of the short display dimension — the live
+//            camera image is a square center-crop — so there is no full-width fill mode.
 
 #include "screen_scaffold.h"          // parse_optional_screen_json_ctx, load_screen_and_cleanup_previous
 #include "seedsigner.h"               // camera_preview_overlay_screen entry-point declaration
@@ -104,30 +102,26 @@ void camera_preview_overlay_screen(void *ctx_json) {
     int32_t screen_w = lv_display_get_horizontal_resolution(NULL);
     int32_t screen_h = lv_display_get_vertical_resolution(NULL);
 
-    // Preview geometry, defaulting per resolution:
-    //   - Higher-resolution DSI panels (short dimension > 240 — the 480x320 / 800x480
-    //     touch displays) DEFAULT to a landscape center-cut SQUARE, leaving static side
-    //     gutters along the long axis. Those panels have per-frame update limits along
-    //     their long axis, so minimizing the redrawn span there (camera writes only the
-    //     square; the gutters never refresh) is the win — hence not opt-in.
-    //   - The Pi Zero (<= 240 short dimension, incl. 320x240) FILLS the display, matching
-    //     Python ScanScreen (render_rect defaults to the whole canvas; 240x240 square ==
-    //     full anyway).
-    // cfg["fill_landscape"] overrides the per-resolution default in EITHER direction
-    // (true on a DSI panel opts into full landscape width; false on the Pi Zero forces
-    // the square); cfg["square"] sets an explicit rect.
+    // Preview geometry: ALWAYS a centered square of the short display dimension.
+    //
+    // The live camera preview is invariably a square, center-cropped image. On each
+    // board the OV5647 is mounted so its widest field of view runs along the panel's
+    // SHORT axis (hence the per-platform quarter-turn), so a centered square already
+    // saturates the available width — a wider crop cannot add width, only surrender
+    // height (image-entropy native contract §7a). There is therefore no full-landscape
+    // fill mode:
+    //   - Square Pi Zero (240x240): the square IS the whole display (no gutters).
+    //   - Wider panels (320x240 / 480x320 / 800x480): the square is center-cut, leaving
+    //     static side gutters the live camera never writes — which also respects those
+    //     panels' per-frame update limits along the long axis.
+    // cfg["square"] sets an explicit rect, overriding this default in whole or per-field.
     int32_t short_dim = screen_w < screen_h ? screen_w : screen_h;
-    bool fill_landscape = cfg.value("fill_landscape", short_dim <= 240);
 
-    int32_t sx = 0, sy = 0, sw = screen_w, sh = screen_h;
-    if (!fill_landscape) {
-        // Center-cut square of the short dimension; the long axis keeps static gutters.
-        sx = (screen_w - short_dim) / 2;
-        sy = (screen_h - short_dim) / 2;
-        sw = short_dim; sh = short_dim;
-    }
+    int32_t sx = (screen_w - short_dim) / 2;
+    int32_t sy = (screen_h - short_dim) / 2;
+    int32_t sw = short_dim, sh = short_dim;
 
-    // Explicit rect overrides either default.
+    // Explicit rect overrides the centered-square default.
     if (cfg.contains("square") && cfg["square"].is_object()) {
         const auto &sq = cfg["square"];
         sx = sq.value("x", sx);

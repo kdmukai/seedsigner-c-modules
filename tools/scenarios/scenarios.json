@@ -490,22 +490,6 @@
         }
       },
       {
-        "name": "force_square",
-        "context": {
-          "fill_landscape": false,
-          "progress": 50,
-          "frame_status": 1
-        }
-      },
-      {
-        "name": "fill_landscape",
-        "context": {
-          "fill_landscape": true,
-          "progress": 50,
-          "frame_status": 1
-        }
-      },
-      {
         "name": "segmented_middle_first",
         "context": {
           "total_segments": 7,
@@ -551,9 +535,8 @@
         }
       },
       {
-        "name": "segmented_degenerate_240",
+        "name": "segmented_degenerate",
         "context": {
-          "fill_landscape": true,
           "total_segments": 200,
           "decoded_range": { "start": 50, "count": 100 },
           "frame_status": 1

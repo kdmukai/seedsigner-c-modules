@@ -46,8 +46,7 @@
 //   capture_style        (string, default "ring")   touch-mode PREVIEW capture control: "ring" | "solid" shutter, or "button"; unknown -> "ring".
 //   capture_label        (string, optional)   touch-mode capture BUTTON text (capture_style "button" only); empty -> omitted.
 //   accept_label         (string, optional)   touch-mode CONFIRM Accept button text; empty -> omitted.
-//   fill_landscape       (bool, default: short dim <= 240)   preview geometry: true fills the display, false center-cuts a square with side gutters.
-//   square               (object {x,y,w,h}, optional)   explicit preview-square rect, overriding the per-resolution default.
+//   square               (object {x,y,w,h}, optional)   explicit preview-square rect, overriding the centered-square default. The preview is ALWAYS a centered square of the short display dimension (the live camera image is a square center-crop); there is no full-width fill mode.
 
 #include "screen_scaffold.h"        // parse_optional_screen_json_ctx, load_screen_and_cleanup_previous
 #include "seedsigner.h"             // camera_entropy_overlay_screen declaration
@@ -139,23 +138,22 @@ void camera_entropy_overlay_screen(void *ctx_json) {
     int32_t screen_w = lv_display_get_horizontal_resolution(NULL);
     int32_t screen_h = lv_display_get_vertical_resolution(NULL);
 
-    // 2. Preview geometry, defaulting per resolution (identical policy to
-    //    camera_preview_overlay_screen): the higher-resolution DSI touch panels
-    //    (short dimension > 240) default to a landscape center-cut SQUARE with static
-    //    side gutters — those panels have per-frame update limits along their long
-    //    axis, so confining the live camera writes to the square (the gutters never
-    //    refresh) is the win, hence not opt-in. The 240px Pi Zero (short dim <= 240)
-    //    FILLS the display. cfg["fill_landscape"] overrides the default in either
-    //    direction; cfg["square"] sets an explicit rect.
+    // 2. Preview geometry: ALWAYS a centered square of the short display dimension
+    //    (identical policy to camera_preview_overlay_screen). The live camera preview
+    //    is invariably a square, center-cropped image — the OV5647's widest field of
+    //    view runs along the panel's SHORT axis, so a centered square already saturates
+    //    the width; a wider crop cannot add width, only surrender height (image-entropy
+    //    native contract §7a). So there is no full-landscape fill mode: on the square Pi
+    //    Zero the square IS the whole display; on wider panels (320x240 / 480x320 /
+    //    800x480) it is center-cut, leaving static side gutters the live camera never
+    //    writes (which also respects those panels' per-frame long-axis update limits).
+    //    cfg["square"] sets an explicit rect.
     int32_t short_dim = screen_w < screen_h ? screen_w : screen_h;
-    bool fill_landscape = cfg.value("fill_landscape", short_dim <= 240);
 
-    int32_t sx = 0, sy = 0, sw = screen_w, sh = screen_h;
-    if (!fill_landscape) {
-        sx = (screen_w - short_dim) / 2;
-        sy = (screen_h - short_dim) / 2;
-        sw = short_dim; sh = short_dim;
-    }
+    int32_t sx = (screen_w - short_dim) / 2;
+    int32_t sy = (screen_h - short_dim) / 2;
+    int32_t sw = short_dim, sh = short_dim;
+
     if (cfg.contains("square") && cfg["square"].is_object()) {
         const auto &sq = cfg["square"];
         sx = sq.value("x", sx);
