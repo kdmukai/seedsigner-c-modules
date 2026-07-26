@@ -96,10 +96,25 @@ static void toast_obj_deleted_cb(lv_event_t *e) {
 
 // --- Dismissal drivers ----------------------------------------------------
 
-// Periodic watch: auto-timeout, plus (hardware mode only) dismiss on any new key /
-// joystick press. The press is observed via the idle clock, NOT consumed — it still
-// reaches the underlying screen's indev, so a press both hides the toast and drives
-// the screen, exactly like Python's has_any_input() check.
+// True while a touch is down on any pointer indev. In touch mode the idle-clock
+// dismissal defers to this: a held finger keeps the idle clock current, so evaluating
+// mid-drag would fire and kill an in-flight swipe on the banner before toast_released_cb
+// gets to classify it. We only judge "any input dismisses" once the gesture has settled.
+static bool touch_gesture_in_progress(void) {
+    lv_indev_t *indev = NULL;
+    while ((indev = lv_indev_get_next(indev)) != NULL) {
+        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER &&
+            lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Periodic watch: auto-timeout, plus dismiss on any new input. The input is observed via
+// the idle clock, NOT consumed — it still reaches the underlying screen's indev, so a
+// press/tap both hides the toast and drives the screen, exactly like Python's
+// has_any_input() check.
 static void toast_watch_cb(lv_timer_t * /*t*/) {
     uint32_t since_show = lv_tick_elaps(s_show_tick);
 
@@ -108,12 +123,19 @@ static void toast_watch_cb(lv_timer_t * /*t*/) {
         return;
     }
 
-    if (s_hardware_mode) {
-        // A new press advances the last-input tick past the show-time baseline.
-        int32_t advanced = (int32_t)(last_input_tick() - s_last_input_at_show);
-        if (advanced > TOAST_INPUT_DISMISS_MARGIN_MS) {
-            toast_overlay_dismiss();
-        }
+    // Touch mode: wait until the gesture ends before judging "any input dismisses". A
+    // tap or swipe ON the banner has already been handled by toast_released_cb; anything
+    // else that completes off the banner (a button tap that navigates away, a scroll, a
+    // dead-space tap) lands here on the first settled tick. Hardware mode has no gesture
+    // to protect, so it evaluates every tick.
+    if (!s_hardware_mode && touch_gesture_in_progress()) {
+        return;
+    }
+
+    // A new input advances the last-input tick past the show-time baseline.
+    int32_t advanced = (int32_t)(last_input_tick() - s_last_input_at_show);
+    if (advanced > TOAST_INPUT_DISMISS_MARGIN_MS) {
+        toast_overlay_dismiss();
     }
 }
 
@@ -329,9 +351,11 @@ void toast_overlay_show(const toast_overlay_spec_t *spec) {
         // Any key/joystick press dismisses — handled by the watch timer's idle-clock
         // check (non-consuming). The banner stays click-through.
     } else {
-        // Touch: press + release on the banner classify tap (dismiss) vs swipe (fly-off
+        // Touch: press + release ON the banner classify tap (dismiss) vs swipe (fly-off
         // in the swipe direction). Clickable so the press lands on the banner; taps
-        // OUTSIDE the bottom band fall through to the screen.
+        // OUTSIDE the bottom band fall through to the screen and dismiss the toast via
+        // the watch timer's idle-clock check (non-consuming) once the touch settles —
+        // so making a selection on the screen below clears the toast too.
         lv_obj_add_flag(toast, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(toast, toast_pressed_cb, LV_EVENT_PRESSED, NULL);
         lv_obj_add_event_cb(toast, toast_released_cb, LV_EVENT_RELEASED, NULL);
