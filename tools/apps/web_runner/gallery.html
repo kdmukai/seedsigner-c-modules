@@ -48,11 +48,21 @@
      Device resolutions are already small, so cells present 1:1 (no thumbnailing). */
   #grid { display: grid; gap: 16px; padding: 16px;
     grid-template-columns: repeat(auto-fill, minmax(var(--cell-w, 260px), max-content)); }
-  figure { margin: 0; background: var(--panel); border: 1px solid var(--line);
+  figure { position: relative; margin: 0; background: var(--panel); border: 1px solid var(--line);
     border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px;
     align-items: center; }
   figure canvas { display: block; image-rendering: pixelated; background: #000;
     border-radius: 3px; cursor: pointer; }
+  /* Per-cell download button (top-right): saves this screen as a PNG with a descriptive
+     filename. Subtle by default, brightens when the cell (or the button) is hovered/focused. */
+  figure .dl-btn { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center; padding: 0;
+    border: 1px solid var(--line); border-radius: 6px; background: rgba(0,0,0,0.55);
+    color: var(--text); font-size: 14px; line-height: 1; cursor: pointer;
+    opacity: 0.45; transition: opacity 0.12s, background 0.12s; }
+  figure:hover .dl-btn { opacity: 0.9; }
+  figure .dl-btn:hover { opacity: 1; background: rgba(0,0,0,0.85); }
+  figure .dl-btn:focus-visible { opacity: 1; outline: 2px solid var(--text); outline-offset: 1px; }
   figure.err { outline: 1px solid var(--err); }
   /* Landscape-only screens on a square target: a blank box sized to the panel with a short
      explanation, shown in place of a (wrong) render. */
@@ -60,7 +70,12 @@
     padding: 12px; color: var(--dim); font-size: 13px; line-height: 1.4; background: #000;
     border: 1px dashed var(--line); border-radius: 3px; }
   /* Caption sits ABOVE the screen — larger so screen name + scenario are easy to scan. */
-  figcaption { font-size: 14px; line-height: 1.3; text-align: center; word-break: break-word; }
+  figcaption { font-size: 14px; line-height: 1.3; text-align: center;
+    /* Reserve a gutter on BOTH sides so the centered title clears the top-right download
+       button (which lives in the right gutter); symmetric padding keeps it visually centered.
+       Break at the <wbr> underscore opportunities first, char-break a lone segment only if it
+       overflows. */
+    padding: 0 30px; word-break: normal; overflow-wrap: break-word; }
   figcaption .screen { color: var(--text); font-weight: 700; font-size: 16px; }
   figcaption .scenario { color: var(--dim); font-size: 13px;
     font-family: ui-monospace, Menlo, Consolas, monospace; }
@@ -204,6 +219,29 @@
     return out;
   }
 
+  // Download filename for a cell, matching the web runner's downloadPng() scheme:
+  // <screen>__<scenario>__<WxH>__<locale>.png, sanitized. '(default)' scenarios → 'default'.
+  function cellPngName(fn, entry) {
+    var scen = (entry && entry.name && entry.name !== '(default)') ? entry.name : 'default';
+    return [fn || 'screen', scen, app.displayW + 'x' + app.displayH, app.locale]
+             .filter(Boolean).join('__').replace(/[^0-9A-Za-z_.-]+/g, '_') + '.png';
+  }
+
+  // Save a rendered cell canvas as a PNG with a proper name, via a throwaway download link.
+  // This is the named-save path (the per-cell download button); the browser's native
+  // right-click "Save image as" still works on the canvas, it just names its file generically
+  // because a canvas carries no URL to derive a name from.
+  function saveCanvasPng(canvas, filename) {
+    canvas.toBlob(function (blob) {
+      if (!blob) return;
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    }, 'image/png');
+  }
+
   // ---- Locale packs (option B: JS pre-fetches, the shared loader orchestrates) ----
   // Byte-for-byte the web runner's applyLocaleFonts: fetch each pack file the render
   // layer asks for (ss_pack_files), stage them all, then ss_load_staged once. Latin
@@ -296,7 +334,17 @@
     // Caption ABOVE the screen (screen name + scenario), larger for at-a-glance scanning.
     var cap = document.createElement('figcaption');
     cap.innerHTML = '<span class="screen"></span><br><span class="scenario"></span>';
-    cap.querySelector('.screen').textContent = fn;
+    // Screen name centered; break long names on underscores (not mid-word) by inserting a
+    // <wbr> break opportunity after each '_'. Built from DOM nodes rather than innerHTML since
+    // the screen name is external catalog data.
+    var screenSpan = cap.querySelector('.screen');
+    fn.split('_').forEach(function (part, i) {
+      if (i > 0) {
+        screenSpan.appendChild(document.createTextNode('_'));
+        screenSpan.appendChild(document.createElement('wbr'));
+      }
+      screenSpan.appendChild(document.createTextNode(part));
+    });
     cap.querySelector('.scenario').textContent = entry.name;
     fig.appendChild(cap);
 
@@ -343,7 +391,7 @@
       // Click a cell to open THAT screen + scenario in the web runner (deep-linked) and test
       // it live. Right-click still gives the browser's native "Save image as" for a quick PNG,
       // which is why the click is free to navigate. Modifier / middle click opens a new tab.
-      canvas.title = 'Click to test this screen live · right-click to save as PNG';
+      canvas.title = 'Click to test this screen live · use the ⬇ button to save it as a PNG';
       var href = runnerUrl(fn, entry);
       canvas.addEventListener('click', function (e) {
         if (e.ctrlKey || e.metaKey || e.shiftKey) window.open(href, '_blank');
@@ -353,6 +401,22 @@
         if (e.button === 1) { e.preventDefault(); window.open(href, '_blank'); }
       });
       fig.appendChild(canvas);
+
+      // Explicit named-save affordance (top-right of the cell): a client-side blob download
+      // with a descriptive filename — works in every serving context (localhost, LAN/tailnet,
+      // Pages). The click is stopped from bubbling so it doesn't open the screen in the runner.
+      var dl = document.createElement('button');
+      dl.type = 'button';
+      dl.className = 'dl-btn';
+      dl.textContent = '⬇';   // ⬇
+      dl.title = 'Download this screen as a PNG';
+      dl.setAttribute('aria-label', 'Download ' + cellPngName(fn, entry));
+      dl.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        saveCanvasPng(canvas, cellPngName(fn, entry));
+      });
+      fig.appendChild(dl);
     } else {
       fig.classList.add('err');
       var ph = document.createElement('div');
@@ -417,7 +481,7 @@
     }
     if (token !== renderToken) return;
     setStatus(cells.length + ' screens  •  ' + localeLabel + '  •  ' + res +
-              '   (click any screen to test its live interactivity · right-click to save as PNG)');
+              '   (click any screen to test its live interactivity · use the ⬇ button on a cell to save it as a PNG)');
   }
 
   // ---- Deep-link (res + language + input mode survive a refresh / shared link) ----
