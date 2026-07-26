@@ -213,6 +213,7 @@
           </select>
         </label>
       </div>
+      <button id="reset-btn" title="Re-run the current screen from scratch — re-trigger a toast / animation and reset any in-screen state, without a page reload">↻ Reset</button>
       <button id="dl-btn" title="Download this screen as a PNG (for a PR / issue)">⬇ PNG</button>
       <button id="fs-btn">Fullscreen</button>
     </div>
@@ -802,6 +803,10 @@
       app.debounceTimer = setTimeout(applyEditor, 250);
     });
     document.getElementById('apply-btn').addEventListener('click', applyEditor);
+    // Reset = re-run the current screen from scratch with the current JSON (same path as
+    // Apply / Run screen), surfaced up by the stage so re-triggering a toast / animation or
+    // clearing in-screen state is one click and doesn't need a full page reload.
+    document.getElementById('reset-btn').addEventListener('click', applyEditor);
 
     resSel.addEventListener('change', function () {
       var p = this.value.split('x');
