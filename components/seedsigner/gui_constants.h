@@ -20,6 +20,11 @@
  * ratio (2x). UI elements come out matched in physical size (measured with a tape
  * measure) between the 3.5" (165 DPI) and 4.3" (217 DPI) displays.
  *
+ * At 720px height (1280x720 landscape display) we use PX_MULTIPLIER=300 — the
+ * direct 720/240 ratio (3x). The panel is physically portrait (720x1280) but
+ * driven rotated to landscape like the other profiles, so the profile is keyed on
+ * the landscape 1280x720 dims (height 720).
+ *
  * The height-to-PX_MULTIPLIER mapping lives here so it is consistent across all
  * build targets (ESP32, Pi Zero, desktop tools). Callers only need to supply
  * DISPLAY_WIDTH and DISPLAY_HEIGHT; the build system passes one or more
@@ -31,7 +36,7 @@
 #include <string>
 #include "lvgl.h"
 
-#if !defined(SUPPORT_DISPLAY_HEIGHT_240) && !defined(SUPPORT_DISPLAY_HEIGHT_320) && !defined(SUPPORT_DISPLAY_HEIGHT_480)
+#if !defined(SUPPORT_DISPLAY_HEIGHT_240) && !defined(SUPPORT_DISPLAY_HEIGHT_320) && !defined(SUPPORT_DISPLAY_HEIGHT_480) && !defined(SUPPORT_DISPLAY_HEIGHT_720)
 #error "At least one SUPPORT_DISPLAY_HEIGHT_* flag must be defined"
 #endif
 
@@ -50,6 +55,7 @@
 const int PX_MULTIPLIER_100 = 100;   // 240px height (Pi Zero): no scaling
 const int PX_MULTIPLIER_133 = 133;   // 320px height (3.5" ESP32): direct 320/240 ratio
 const int PX_MULTIPLIER_200 = 200;   // 480px height (4.3" ESP32): direct 480/240 ratio (2x)
+const int PX_MULTIPLIER_300 = 300;   // 720px height (1280x720 ESP32): direct 720/240 ratio (3x)
 
 // Auto-scroll feel for an overflowing single-line label (top-nav title; long
 // status headline). Hold the line start-justified for an initial beat so the reader
@@ -104,6 +110,18 @@ LV_FONT_DECLARE(inconsolata_semibold_24_4bpp_200x);
 LV_FONT_DECLARE(inconsolata_semibold_22_4bpp_200x);
 #endif
 
+// The "_300x" suffix matches the 720px-height profile's PX_MULTIPLIER_300
+// (geometric 720/240 = 3x); these fonts are sized accordingly (icons 72/78/108/144,
+// keyboard 66/72).
+#ifdef SUPPORT_DISPLAY_HEIGHT_720
+LV_FONT_DECLARE(seedsigner_icons_24_4bpp_300x);
+LV_FONT_DECLARE(seedsigner_icons_36_4bpp_300x);
+LV_FONT_DECLARE(seedsigner_icons_48_4bpp_300x);
+LV_FONT_DECLARE(seedsigner_icons_26_4bpp_300x);
+LV_FONT_DECLARE(inconsolata_semibold_24_4bpp_300x);
+LV_FONT_DECLARE(inconsolata_semibold_22_4bpp_300x);
+#endif
+
 // ---------------------------------------------------------------------------
 // Image declarations for supported display heights
 // ---------------------------------------------------------------------------
@@ -129,6 +147,11 @@ LV_IMAGE_DECLARE(btc_logo_img_133x);
 LV_IMAGE_DECLARE(seedsigner_logo_img_200x);
 LV_IMAGE_DECLARE(hrf_logo_img_200x);
 LV_IMAGE_DECLARE(btc_logo_img_200x);
+#endif
+#ifdef SUPPORT_DISPLAY_HEIGHT_720
+LV_IMAGE_DECLARE(seedsigner_logo_img_300x);
+LV_IMAGE_DECLARE(hrf_logo_img_300x);
+LV_IMAGE_DECLARE(btc_logo_img_300x);
 #endif
 
 // ---------------------------------------------------------------------------
