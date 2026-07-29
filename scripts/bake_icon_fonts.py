@@ -4,7 +4,7 @@
 Regenerates the inline/top-nav icon font used by button icons and the top-nav
 back/power buttons:
 
-    components/seedsigner/fonts/seedsigner_icons_24_4bpp{,_133x,_200x}.c
+    components/seedsigner/fonts/seedsigner_icons_24_4bpp{,_133x,_200x,_300x}.c
 
 What it does, repeatably, from the canonical .otf sources:
 
@@ -48,8 +48,9 @@ SEEDSIGNER_RANGE = "0xE900-0xE923"                  # all SeedSigner PUA icon gl
 # keyboard_screen) — all FontAwesome glyphs that appear on buttons.
 FONTAWESOME_RANGE = "0xf030,0xf11c,0xf522-0xf528"
 
-# (lv_font_conv --size, file suffix) per display profile: base=100, 133x, 200x.
-VARIANTS = [(24, ""), (32, "_133x"), (48, "_200x")]
+# (lv_font_conv --size, file suffix) per display profile: base=100, 133x, 200x, 300x.
+# Sizes are the 24 px base scaled by the profile px_multiplier (24 / 1.333 / 2 / 3).
+VARIANTS = [(24, ""), (32, "_133x"), (48, "_200x"), (72, "_300x")]
 
 PREAMBLE_BARE = (
     '#ifdef LV_LVGL_H_INCLUDE_SIMPLE\n'

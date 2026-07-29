@@ -4,9 +4,9 @@
 Regenerates the six compiled-in monospace fonts used by the keyboard, text entry, and the
 monospace readouts (xpub value, review-passphrase):
 
-    components/seedsigner/fonts/inconsolata_semibold_{22,24}_4bpp{,_133x,_200x}.c
+    components/seedsigner/fonts/inconsolata_semibold_{22,24}_4bpp{,_133x,_200x,_300x}.c
 
-Two size roles, each emitted at three display-profile sizes (base=100%, 133x, 200x):
+Two size roles, each emitted at four display-profile sizes (base=100%, 133x, 200x, 300x):
 
   * 22 px "candidate" font — Inconsolata-SemiBold, ASCII only.
   * 24 px "keyboard" font  — Inconsolata-SemiBold ASCII + the handful of SeedSigner PUA
@@ -48,12 +48,13 @@ INCONSOLATA_RANGE = "0x20-0x7E"
 # space) — merged into the 24 px keyboard font only.
 KEYBOARD_ICON_RANGE = "0xE905,0xE909,0xE90A,0xE922,0xE923"
 
-# role stem, whether to merge the keyboard icons, and the (base, 133x, 200x) px sizes.
+# role stem, whether to merge the keyboard icons, and the (base, 133x, 200x, 300x) px
+# sizes (the base scaled by each profile px_multiplier: x1 / x1.333 / x2 / x3).
 ROLES = [
-    ("inconsolata_semibold_22_4bpp", False, (22, 29, 44)),
-    ("inconsolata_semibold_24_4bpp", True,  (24, 32, 48)),
+    ("inconsolata_semibold_22_4bpp", False, (22, 29, 44, 66)),
+    ("inconsolata_semibold_24_4bpp", True,  (24, 32, 48, 72)),
 ]
-PROFILE_SUFFIXES = ["", "_133x", "_200x"]
+PROFILE_SUFFIXES = ["", "_133x", "_200x", "_300x"]
 
 PREAMBLE_BARE = (
     '#ifdef LV_LVGL_H_INCLUDE_SIMPLE\n'

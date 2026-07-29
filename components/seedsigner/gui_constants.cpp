@@ -36,6 +36,24 @@ struct FontSet {
 // slots null and supplies only the baked, never-translated fonts: the seedsigner
 // icons (PUA) and the fixed-width Inconsolata keyboard/text-entry font (ASCII).
 static FontSet fonts_for_multiplier(int px_mult) {
+#ifdef SUPPORT_DISPLAY_HEIGHT_720
+    if (px_mult == PX_MULTIPLIER_300) {
+        // _300x fonts = 300-scaled (= base x 720/240 = 3x). See gui_constants.h.
+        return {
+            nullptr,  // main_menu_title  } OpenSans Western TTF,
+            nullptr,  // title            } installed per-role by
+            nullptr,  // large_button     } set_display() once LVGL
+            nullptr,  // button           } is initialized.
+            nullptr,  // body             }
+            &seedsigner_icons_24_4bpp_300x,      // icon          = 72px (24 x 3)
+            &seedsigner_icons_36_4bpp_300x,      // icon_large    = 108px (36 x 3)
+            &seedsigner_icons_48_4bpp_300x,      // icon_primary  = 144px (48 x 3)
+            &inconsolata_semibold_24_4bpp_300x,  // keyboard      = 72px (24 x 3)
+            &inconsolata_semibold_22_4bpp_300x,  // candidate     = 66px (22 x 3)
+            &seedsigner_icons_26_4bpp_300x,      // top_nav_icon  = 78px (26 x 3)
+        };
+    }
+#endif
 #ifdef SUPPORT_DISPLAY_HEIGHT_480
     if (px_mult == PX_MULTIPLIER_200) {
         return {
@@ -98,6 +116,7 @@ static DisplayProfile make_profile(int width, int height) {
         case 240: px_mult = PX_MULTIPLIER_100; break;
         case 320: px_mult = PX_MULTIPLIER_133; break;
         case 480: px_mult = PX_MULTIPLIER_200; break;
+        case 720: px_mult = PX_MULTIPLIER_300; break;
         default:
             fprintf(stderr, "FATAL: no PX_MULTIPLIER for height=%d\n", height);
             abort();
@@ -159,6 +178,10 @@ static DisplayProfile profile_480x320 = make_profile(480, 320);
 static DisplayProfile profile_800x480 = make_profile(800, 480);
 #endif
 
+#ifdef SUPPORT_DISPLAY_HEIGHT_720
+static DisplayProfile profile_1280x720 = make_profile(1280, 720);
+#endif
+
 // ---------------------------------------------------------------------------
 // Profile lookup table
 // ---------------------------------------------------------------------------
@@ -178,6 +201,9 @@ static const ProfileEntry profile_table[] = {
 #endif
 #ifdef SUPPORT_DISPLAY_HEIGHT_480
     {800, 480, &profile_800x480},
+#endif
+#ifdef SUPPORT_DISPLAY_HEIGHT_720
+    {1280, 720, &profile_1280x720},
 #endif
 };
 
@@ -221,6 +247,9 @@ DisplayProfile& active_profile_mutable() {
 // ---------------------------------------------------------------------------
 const lv_image_dsc_t* seedsigner_logo_for_active_profile() {
     const int px_mult = active_profile().px_multiplier;
+#ifdef SUPPORT_DISPLAY_HEIGHT_720
+    if (px_mult == PX_MULTIPLIER_300) return &seedsigner_logo_img_300x;  // 1280x720 profile (base x 3)
+#endif
 #ifdef SUPPORT_DISPLAY_HEIGHT_480
     if (px_mult == PX_MULTIPLIER_200) return &seedsigner_logo_img_200x;
 #endif
@@ -236,6 +265,9 @@ const lv_image_dsc_t* seedsigner_logo_for_active_profile() {
 
 const lv_image_dsc_t* hrf_logo_for_active_profile() {
     const int px_mult = active_profile().px_multiplier;
+#ifdef SUPPORT_DISPLAY_HEIGHT_720
+    if (px_mult == PX_MULTIPLIER_300) return &hrf_logo_img_300x;  // 1280x720 profile (base x 3)
+#endif
 #ifdef SUPPORT_DISPLAY_HEIGHT_480
     if (px_mult == PX_MULTIPLIER_200) return &hrf_logo_img_200x;
 #endif
@@ -251,6 +283,9 @@ const lv_image_dsc_t* hrf_logo_for_active_profile() {
 
 const lv_image_dsc_t* btc_logo_for_active_profile() {
     const int px_mult = active_profile().px_multiplier;
+#ifdef SUPPORT_DISPLAY_HEIGHT_720
+    if (px_mult == PX_MULTIPLIER_300) return &btc_logo_img_300x;  // 180px (60 x 3)
+#endif
 #ifdef SUPPORT_DISPLAY_HEIGHT_480
     if (px_mult == PX_MULTIPLIER_200) return &btc_logo_img_200x;  // 120px (60 x 2)
 #endif

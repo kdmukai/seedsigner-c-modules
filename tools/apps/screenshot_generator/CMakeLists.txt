@@ -29,6 +29,9 @@ endif()
 if(NOT DEFINED SUPPORT_DISPLAY_HEIGHT_480)
     set(SUPPORT_DISPLAY_HEIGHT_480 ON)
 endif()
+if(NOT DEFINED SUPPORT_DISPLAY_HEIGHT_720)
+    set(SUPPORT_DISPLAY_HEIGHT_720 ON)
+endif()
 
 # Repo layout assumptions:
 # - this file lives at seedsigner-lvgl-screens/tools/apps/screenshot_generator
@@ -103,6 +106,16 @@ if(SUPPORT_DISPLAY_HEIGHT_480)
       "${SEEDSIGNER_DIR}/fonts/inconsolata_semibold_22_4bpp_200x.c"
     )
 endif()
+if(SUPPORT_DISPLAY_HEIGHT_720)
+    list(APPEND SEEDSIGNER_FONT_SOURCES
+      "${SEEDSIGNER_DIR}/fonts/seedsigner_icons_24_4bpp_300x.c"
+      "${SEEDSIGNER_DIR}/fonts/seedsigner_icons_26_4bpp_300x.c"
+      "${SEEDSIGNER_DIR}/fonts/seedsigner_icons_36_4bpp_300x.c"
+      "${SEEDSIGNER_DIR}/fonts/seedsigner_icons_48_4bpp_300x.c"
+      "${SEEDSIGNER_DIR}/fonts/inconsolata_semibold_24_4bpp_300x.c"
+      "${SEEDSIGNER_DIR}/fonts/inconsolata_semibold_22_4bpp_300x.c"
+    )
+endif()
 
 # Baked logo + HRF partner-logo assets, gated per display height (mirrors the
 # font blocks above). The runtime selectors (seedsigner_logo_for_active_profile)
@@ -125,6 +138,12 @@ if(SUPPORT_DISPLAY_HEIGHT_480)
     "${SEEDSIGNER_DIR}/images/seedsigner_logo_img_200x.c"
     "${SEEDSIGNER_DIR}/images/hrf_logo_img_200x.c"
     "${SEEDSIGNER_DIR}/images/btc_logo_img_200x.c")
+endif()
+if(SUPPORT_DISPLAY_HEIGHT_720)
+  list(APPEND SEEDSIGNER_IMAGE_SOURCES
+    "${SEEDSIGNER_DIR}/images/seedsigner_logo_img_300x.c"
+    "${SEEDSIGNER_DIR}/images/hrf_logo_img_300x.c"
+    "${SEEDSIGNER_DIR}/images/btc_logo_img_300x.c")
 endif()
 
 set(SEEDSIGNER_CORE_SOURCES
@@ -204,11 +223,16 @@ target_compile_definitions(screenshot_gen PRIVATE
   # lv_qrcode sources (already in the LVGL glob, #if LV_USE_QRCODE-gated). Canvas is
   # default-on under LV_CONF_SKIP, so no source-list edits are needed.
   LV_USE_QRCODE=1
+  # The 1280x720 (720px-height) profile scales the primary-screen icon font to 144px
+  # (48 base x3); its glyph descriptors overflow LVGL's default 12-bit adv_w / small
+  # bitmap_index fields, so widen them binary-wide. Harmless for the smaller fonts.
+  LV_FONT_FMT_TXT_LARGE=1
   DISPLAY_WIDTH=${DISPLAY_WIDTH}
   DISPLAY_HEIGHT=${DISPLAY_HEIGHT}
   $<$<BOOL:${SUPPORT_DISPLAY_HEIGHT_240}>:SUPPORT_DISPLAY_HEIGHT_240>
   $<$<BOOL:${SUPPORT_DISPLAY_HEIGHT_320}>:SUPPORT_DISPLAY_HEIGHT_320>
   $<$<BOOL:${SUPPORT_DISPLAY_HEIGHT_480}>:SUPPORT_DISPLAY_HEIGHT_480>
+  $<$<BOOL:${SUPPORT_DISPLAY_HEIGHT_720}>:SUPPORT_DISPLAY_HEIGHT_720>
 )
 
 target_include_directories(screenshot_gen PRIVATE
