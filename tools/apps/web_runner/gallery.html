@@ -44,15 +44,35 @@
     border-bottom: 1px solid var(--line); background: var(--panel); }
   #status.err { color: var(--err); }
 
-  /* The grid: auto-fill columns wide enough for one device screen at native size.
-     Device resolutions are already small, so cells present 1:1 (no thumbnailing). */
+  /* The grid: auto-fill columns, one device screen wide. Track = minmax(--cell-w, 1fr):
+     - --cell-w (the min) is set in JS (updateCellWidth) to min(native cell width, available grid
+       width), so on a viewport narrower than one device screen — e.g. a 1280×720 cell on a phone —
+       the column is capped to what fits and the cell scales down to it (canvas rule below) instead
+       of overflowing into a horizontal scroll. It's a definite px, NOT a % expression: a percentage
+       inside a grid track's min (min(--cell-w, 100%)) does not reliably resolve against the
+       container during track sizing.
+     - 1fr (the max) is required: a flexible max makes the track actually constrain its item to the
+       column, whereas a fixed-width or max-content track lets the canvas overflow to its 1280 px
+       intrinsic width. It also fills the row so columns don't leave a ragged right edge. */
   #grid { display: grid; gap: 16px; padding: 16px;
-    grid-template-columns: repeat(auto-fill, minmax(var(--cell-w, 260px), max-content)); }
-  figure { position: relative; margin: 0; background: var(--panel); border: 1px solid var(--line);
-    border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px;
-    align-items: center; }
-  figure canvas { display: block; image-rendering: pixelated; background: #000;
-    border-radius: 3px; cursor: pointer; }
+    grid-template-columns: repeat(auto-fill, minmax(var(--cell-w, 260px), 1fr)); }
+  figure { position: relative; margin: 0; min-width: 0; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: flex;
+    flex-direction: column; gap: 8px; align-items: center; }
+  /* Present at native size, but never wider than the cell: max-width:100% + height:auto scales a
+     too-wide screenshot (e.g. 1280px on a phone) down to the column width, aspect preserved.
+     image-rendering:auto smooths that downscale (pixelated would alias text); at 1:1 it's a no-op.
+     The ⬇ download still saves the full native-resolution canvas regardless of display scaling. */
+  figure canvas { display: block; image-rendering: auto; background: #000;
+    border-radius: 3px; cursor: pointer; max-width: 100%; height: auto; }
+  /* Placeholder box shown before a cell renders (lazy) and after it is torn down to cap
+     memory. Same black + radius as the canvas so the swap is visually seamless; aspect-ratio +
+     max-width:100% (width/ratio set inline) make it fit-to-width exactly like the canvas. A faint
+     centered dot hints "not yet rendered" without drawing attention. */
+  figure .cell-slot { background: #000; border-radius: 3px; display: flex;
+    align-items: center; justify-content: center; max-width: 100%; }
+  figure .cell-slot::after { content: ""; width: 10px; height: 10px; border-radius: 50%;
+    background: var(--line); }
   /* Per-cell download button (top-right): saves this screen as a PNG with a descriptive
      filename. Subtle by default, brightens when the cell (or the button) is hovered/focused. */
   figure .dl-btn { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px;
@@ -68,7 +88,7 @@
      explanation, shown in place of a (wrong) render. */
   figure .ph-note { display: flex; align-items: center; justify-content: center; text-align: center;
     padding: 12px; color: var(--dim); font-size: 13px; line-height: 1.4; background: #000;
-    border: 1px dashed var(--line); border-radius: 3px; }
+    border: 1px dashed var(--line); border-radius: 3px; max-width: 100%; }
   /* Caption sits ABOVE the screen — larger so screen name + scenario are easy to scan. */
   figcaption { font-size: 14px; line-height: 1.3; text-align: center;
     /* Reserve a gutter on BOTH sides so the centered title clears the top-right download
@@ -102,6 +122,7 @@
       <option value="320x240">320 × 240</option>
       <option value="480x320">480 × 320</option>
       <option value="800x480">800 × 480</option>
+      <option value="1280x720">1280 × 720</option>
     </select>
   </label>
   <label>Input
@@ -194,11 +215,50 @@
   // Read the RGB565 plane straight from the WASM heap, expand to RGBA with the EXACT
   // shift the SDL present uses (runner_sdl.cpp) so cells match the on-screen pixels.
   // rotateCW presents portrait-authored screens 90° CW into a landscape canvas.
+  //
+  // The RGBA ImageData and (rotate-only) source canvas are REUSED across renders — created once per
+  // framebuffer size, not per cell. A fresh ImageData is ~3.7 MB at 1280×720; allocating one per
+  // render generates garbage ~60×/sec during a fling (~220 MB/s) — far faster than GC reclaims, so
+  // the JS heap spikes and the mobile tab crashes (confirmed: forcing GC after 40 renders dropped
+  // the heap 87 MB → 20 MB, i.e. it was all reclaimable garbage). Reusing them means the ONLY
+  // per-cell allocation is the retained cell canvas, which the caller already caps + tears down.
+  var g_fbImg = null, g_fbW = 0, g_fbH = 0;   // reused ImageData (framebuffer → RGBA)
+  var g_fbSrc = null;                          // reused source canvas (rotate path only)
+
+  // Canvas POOL: reuse a small fixed set of cell canvases instead of createElement/destroy per
+  // render. Recreating a ~1280×720 canvas each render churns a GPU texture alloc+free every time,
+  // and Chrome/Android does not reclaim freed GPU textures promptly — so a long scroll (hundreds of
+  // renders) accumulates them and the tab eventually crashes even though JS heap and canvas COUNT
+  // are bounded. Pooling keeps ~cap textures alive and REPAINTS them (same size → no realloc), so
+  // there is no per-render GPU churn. Cells carry NO per-canvas listeners (grid-level delegation in
+  // initUI handles clicks), so a pooled canvas is safe to reuse for a different cell. Cleared on a
+  // slice change (the framebuffer size may differ) via clearCanvasPool().
+  var canvasPool = [];
+  function acquireCellCanvas(w, h) {
+    var cv = canvasPool.pop() || document.createElement('canvas');
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }  // resize only if needed
+    return cv;
+  }
+  function releaseCellCanvas(cv) {
+    cv.remove();
+    // Keep it (still sized) for reuse — no zero/resize means its GPU texture is reused, not churned.
+    // Cap the pool just above the live cap; free any surplus outright.
+    if (canvasPool.length < maxLiveCanvases + 3) canvasPool.push(cv);
+    else { cv.width = 0; cv.height = 0; }
+  }
+  function clearCanvasPool() {
+    for (var i = 0; i < canvasPool.length; i++) { canvasPool[i].width = 0; canvasPool[i].height = 0; }
+    canvasPool.length = 0;
+  }
+
   function paintFramebuffer(rotateCW) {
     var w = app.getWidth(), h = app.getHeight();
     var ptr = app.getFramebuffer();                      // byte offset into the WASM heap
     var fb = new Uint16Array(Module.HEAPU16.buffer, ptr, w * h);  // re-view (growth-safe)
-    var img = new ImageData(w, h), d = img.data;
+    if (!g_fbImg || g_fbW !== w || g_fbH !== h) {         // (re)allocate only when the size changes
+      g_fbImg = new ImageData(w, h); g_fbW = w; g_fbH = h;
+    }
+    var d = g_fbImg.data;
     for (var i = 0, p = 0; i < w * h; i++, p += 4) {
       var c = fb[i];
       d[p]     = (c >> 11) << 3;          // R
@@ -206,17 +266,24 @@
       d[p + 2] = (c & 0x1F) << 3;         // B
       d[p + 3] = 255;
     }
-    var src = document.createElement('canvas');
-    src.width = w; src.height = h;
-    src.getContext('2d').putImageData(img, 0, 0);
-    if (!rotateCW) return src;
-    var out = document.createElement('canvas');
-    out.width = h; out.height = w;                        // dims swap for the 90° rotation
-    var ctx = out.getContext('2d');
-    ctx.translate(out.width / 2, out.height / 2);
+    if (!rotateCW) {
+      var out = acquireCellCanvas(w, h);
+      out.getContext('2d').putImageData(g_fbImg, 0, 0);  // full-canvas write; overwrites prior content
+      return out;
+    }
+    // Rotate: stage the frame in the reused source canvas, then draw it 90° CW into the cell canvas.
+    if (!g_fbSrc) g_fbSrc = document.createElement('canvas');
+    if (g_fbSrc.width !== w || g_fbSrc.height !== h) { g_fbSrc.width = w; g_fbSrc.height = h; }
+    g_fbSrc.getContext('2d').putImageData(g_fbImg, 0, 0);
+    var rot = acquireCellCanvas(h, w);                   // dims swap for the 90° rotation
+    var ctx = rot.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);                  // reset any transform left by a prior reuse
+    ctx.clearRect(0, 0, rot.width, rot.height);
+    ctx.translate(rot.width / 2, rot.height / 2);
     ctx.rotate(Math.PI / 2);
-    ctx.drawImage(src, -w / 2, -h / 2);
-    return out;
+    ctx.drawImage(g_fbSrc, -w / 2, -h / 2);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);                  // leave clean for the next reuse
+    return rot;
   }
 
   // Download filename for a cell, matching the web runner's downloadPng() scheme:
@@ -240,6 +307,13 @@
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
     }, 'image/png');
+  }
+
+  // Save a rendered cell's canvas as a named PNG. Called from the grid's delegated click handler
+  // (initUI) when the ⬇ button is tapped; a torn-down/placeholder cell has no canvas, so it no-ops.
+  function downloadCell(fig) {
+    if (!fig || !fig._canvas || fig._canvas.tagName !== 'CANVAS') return;
+    saveCanvasPng(fig._canvas, cellPngName(fig._cell.fn, fig._cell.entry));
   }
 
   // ---- Locale packs (option B: JS pre-fetches, the shared loader orchestrates) ----
@@ -315,21 +389,137 @@
     }
   }
 
-  // ---- Slice render ----
+  // ---- Slice render (lazy: cells render only as they scroll into view) ----
+  // A full slice is ~150 screens. Materializing every cell's canvas up-front is fine at the
+  // small device sizes but catastrophic at 1280×720: ~150 × (1280·720·4 B) ≈ 570 MB of canvas
+  // backing store plus ~150 synchronous framebuffer→RGBA paint loops — enough to OOM / freeze a
+  // phone. So we lay out sized PLACEHOLDERS immediately (cheap) and render each cell's
+  // framebuffer into its box only as it nears the viewport (IntersectionObserver), driving the
+  // single shared WASM engine one render at a time. A per-slice memory cap tears down the oldest
+  // OFF-SCREEN canvases so live canvas memory stays bounded no matter how big the slice is.
   function raf() { return new Promise(function (r) { requestAnimationFrame(r); }); }
 
-  // Size the grid columns to the actual cell width (native landscape device width + the
-  // figure's padding/border) so auto-fill packs them tightly with no horizontal overflow.
-  // All cells at a given resolution present landscape, so displayW is the max.
-  function updateCellWidth() {
-    document.documentElement.style.setProperty('--cell-w', (app.displayW + 22) + 'px');
+  // --- Lazy-render state (reset per slice by renderSlice) ---
+  // A full-size (1280×720 ≈ 3.7 MB) canvas per cell × ~150 cells = ~570 MB — it OOM-crashes a phone.
+  // So a cell renders into its box only when it nears the viewport (renderObs), and we hold a HARD
+  // CAP of at most `maxLiveCanvases` rendered canvases at once. When a render pushes over the cap we
+  // tear down the live cell physically FARTHEST from the viewport (measured with getBoundingClientRect
+  // — pure geometry, no reliance on observer callbacks/flags, which proved unreliable for teardown
+  // and are untestable headless). Because eviction runs after every render, liveList is bounded by
+  // the cap at all times, so total canvas memory is bounded no matter how far you scroll. A torn-down
+  // cell re-renders if you scroll back to it.
+  var renderObs = null;           // fires when a cell nears the viewport → enqueue its render
+  var engineChain = Promise.resolve();  // serializes engine renders (the engine is one global)
+  var liveList = [];              // rendered figures currently holding a canvas
+  var maxLiveCanvases = 1e9;      // hard cap on live canvases (set per slice in renderSlice)
+  var RENDER_MARGIN = '400px 0px';  // begin rendering a cell this far before it enters the viewport
+
+  // Vertical distance (px) from a figure to the viewport: 0 while on-screen, else how far off.
+  function distFromViewport(fig) {
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    var r = fig.getBoundingClientRect();
+    if (r.bottom < 0) return -r.bottom;    // fully above the viewport
+    if (r.top > vh)   return r.top - vh;   // fully below the viewport
+    return 0;                              // intersecting the viewport
   }
 
-  // Build one grid cell: set orientation, load the screen, paint its framebuffer into a
-  // canvas, and append it with a caption. Returns nothing; appends to #grid. Assumes
-  // fonts for app.locale are already loaded.
-  async function renderCell(fn, entry, mode, landscapeOnly) {
+  // A placeholder box sized to the device screen so the grid lays out at full height before anything
+  // renders (stable scroll + correct geometry). aspect-ratio + max-width:100% (CSS) make it
+  // fit-to-width on a narrow viewport exactly like the rendered canvas.
+  function makeSlot() {
+    var slot = document.createElement('div');
+    slot.className = 'cell-slot';
+    slot.style.width = app.displayW + 'px';
+    slot.style.aspectRatio = app.displayW + ' / ' + app.displayH;
+    return slot;
+  }
+
+  // Tear a rendered cell back down to a placeholder, freeing its canvas; it re-renders if it
+  // scrolls back near the viewport. Removes itself from liveList so the live set stays accurate.
+  function teardownFig(fig) {
+    if (!fig._rendered) return;
+    if (fig._canvas) {
+      // Return the canvas to the pool (kept sized, texture reused) rather than destroying it — see
+      // the pool note above for why recreating textures per render crashes mobile over a long scroll.
+      // The error-box path stores a <div> in _canvas, which is not poolable; just remove it.
+      if (fig._canvas.tagName === 'CANVAS') releaseCellCanvas(fig._canvas);
+      else fig._canvas.remove();
+    }
+    if (fig._dl) { fig._dl.remove(); fig._dl = null; }
+    fig._canvas = null;
+    fig.classList.remove('err');
+    fig._slot = makeSlot();
+    fig.appendChild(fig._slot);
+    fig._rendered = false;
+    var i = liveList.indexOf(fig);
+    if (i !== -1) liveList.splice(i, 1);
+  }
+
+  // Enforce the hard cap: while over it, tear down the live cell FARTHEST from the viewport. Never
+  // evicts an on-screen cell (dist 0) — if every live cell is on-screen (huge viewport vs. a tiny
+  // cap) we just hold them. Geometry-driven, so it works regardless of any observer timing.
+  function evictLive() {
+    while (liveList.length > maxLiveCanvases) {
+      var victim = null, farthest = -1;
+      for (var i = 0; i < liveList.length; i++) {
+        var d = distFromViewport(liveList[i]);
+        if (d > farthest) { farthest = d; victim = liveList[i]; }
+      }
+      if (!victim || farthest === 0) break;   // nothing off-screen to evict
+      teardownFig(victim);   // self-removes from liveList
+    }
+  }
+
+  // Enqueue a cell for rendering when it nears the viewport. Renders are chained through a single
+  // promise so the shared engine is only ever driven by ONE render at a time; a stale entry (its
+  // slice was superseded) checks the render token and no-ops. A frame is yielded between cells so
+  // a burst of newly-visible cells streams in without blocking input.
+  function enqueueRender(fig) {
+    if (fig._rendered || fig._queued || !fig._needsEngine) return;
+    fig._queued = true;
+    var myToken = renderToken;
+    engineChain = engineChain.then(async function () {
+      if (myToken !== renderToken || fig._rendered || !fig._queued) { fig._queued = false; return; }
+      fig._queued = false;
+      // On a fast fling-scroll many cells flash through the render margin before their turn comes;
+      // if this one has since scrolled well away, skip it (renderObs re-enqueues it if it returns).
+      if (distFromViewport(fig) > 1200) return;
+      await renderCellInto(fig);
+      if (myToken !== renderToken) return;   // slice changed mid-render; discard (fig is detached)
+      fig._rendered = true;
+      liveList.push(fig);
+      evictLive();   // may immediately tear this cell back down if it scrolled far while rendering
+      await raf();
+    });
+  }
+
+  // Size the grid columns to one device screen (native landscape device width + the figure's
+  // padding/border), but CAPPED to the width actually available so a screen wider than the viewport
+  // — e.g. a 1280 px cell on a phone — shrinks the column to fit and the cell scales down to it
+  // (fit-to-width) instead of overflowing the page. All cells at a resolution present landscape, so
+  // displayW is the max. Re-run on resize (below) so rotating the phone re-fits. A definite px is
+  // set (not a CSS % expression) because percentages inside a grid track's min don't resolve here.
+  function updateCellWidth() {
+    var grid = document.getElementById('grid');
+    // Grid content width (clientWidth minus the grid's 16px l/r padding); fall back to the viewport
+    // before the grid is laid out. Floor so an absurdly narrow window still yields a usable column.
+    var avail = Math.max(140, (grid ? grid.clientWidth : window.innerWidth) - 32);
+    var cellW = Math.min(app.displayW + 22, avail);
+    document.documentElement.style.setProperty('--cell-w', cellW + 'px');
+  }
+
+  // Build one cell's PLACEHOLDER (caption + a device-sized black box) and append it to the grid.
+  // No engine work here — that happens lazily in renderCellInto once the cell nears the viewport.
+  // Landscape-only screens on a square panel are fully resolved here (a static note, never an
+  // engine render). Returns the figure, tagged with the state the lazy machinery reads.
+  function buildCellPlaceholder(fn, entry, mode, landscapeOnly) {
     var fig = document.createElement('figure');
+    fig._cell = { fn: fn, entry: entry, mode: mode };
+    fig._needsEngine = false;  // set true below for real (renderable) cells
+    fig._rendered = false;
+    fig._queued = false;
+    fig._canvas = null;
+    fig._dl = null;
 
     // Caption ABOVE the screen (screen name + scenario), larger for at-a-glance scanning.
     var cap = document.createElement('figcaption');
@@ -348,20 +538,32 @@
     cap.querySelector('.scenario').textContent = entry.name;
     fig.appendChild(cap);
 
-    // Landscape-only screens (portrait-authored, presented rotated) render wrong on a square
-    // panel, so at a square resolution we show a blank placeholder cell IN PLACE — not hidden,
-    // not (mis)rendered — with a short explanation. No engine work for these.
     if (landscapeOnly) {
+      // Landscape-only screens (portrait-authored, presented rotated) render wrong on a square
+      // panel, so at a square resolution we show a blank note cell IN PLACE — not hidden, not
+      // (mis)rendered — with a short explanation. No engine work, ever, so it stays a placeholder.
       fig.classList.add('landscape-only');
       var note = document.createElement('div');
       note.className = 'ph-note';
-      note.style.width  = app.displayW + 'px';
-      note.style.height = app.displayH + 'px';
+      note.style.width = app.displayW + 'px';
+      note.style.aspectRatio = app.displayW + ' / ' + app.displayH;   // fits-to-width like the cells
       note.textContent = 'Landscape-only screen';
       fig.appendChild(note);
-      document.getElementById('grid').appendChild(fig);
-      return;
+    } else {
+      fig._needsEngine = true;
+      fig._slot = makeSlot();
+      fig.appendChild(fig._slot);
     }
+    document.getElementById('grid').appendChild(fig);
+    return fig;
+  }
+
+  // Render one placeholder cell: drive the shared engine for fig._cell and paint its framebuffer
+  // into a canvas that replaces the placeholder slot (or an error box). This is the back half of
+  // the old renderCell; it assumes fonts for app.locale are already loaded, and runs one-at-a-time
+  // (serialized by enqueueRender's promise chain — the engine is a single global).
+  async function renderCellInto(fig) {
+    var cell = fig._cell, fn = cell.fn, entry = cell.entry, mode = cell.mode;
 
     // Orientation must be applied BEFORE the load so the screen builds in the right frame.
     app.setPresentRotation(entry.rotate ? 1 : 0);
@@ -386,54 +588,52 @@
     } catch (e) { rc = -1; }
     var canvas = (rc === 1) ? paintFramebuffer(!!entry.rotate) : null;
 
-    if (canvas) {
-      // Present at native device pixels (the canvas' own width/height); no CSS scaling.
-      // Click a cell to open THAT screen + scenario in the web runner (deep-linked) and test
-      // it live. Right-click still gives the browser's native "Save image as" for a quick PNG,
-      // which is why the click is free to navigate. Modifier / middle click opens a new tab.
-      canvas.title = 'Click to test this screen live · use the ⬇ button to save it as a PNG';
-      var href = runnerUrl(fn, entry);
-      canvas.addEventListener('click', function (e) {
-        if (e.ctrlKey || e.metaKey || e.shiftKey) window.open(href, '_blank');
-        else window.location.href = href;
-      });
-      canvas.addEventListener('auxclick', function (e) {
-        if (e.button === 1) { e.preventDefault(); window.open(href, '_blank'); }
-      });
-      fig.appendChild(canvas);
+    // Swap the placeholder slot for the result.
+    if (fig._slot) { fig._slot.remove(); fig._slot = null; }
 
-      // Explicit named-save affordance (top-right of the cell): a client-side blob download
-      // with a descriptive filename — works in every serving context (localhost, LAN/tailnet,
-      // Pages). The click is stopped from bubbling so it doesn't open the screen in the runner.
+    if (canvas) {
+      // Present at native device pixels (the canvas' own width/height); no CSS scaling. Click a cell
+      // to open THAT screen + scenario in the web runner (deep-linked); the ⬇ button saves a PNG.
+      // These are handled by GRID-LEVEL event delegation (see initUI) — NOT per-canvas/per-button
+      // listeners — so pooled canvases carry no stale handlers when reused for a different cell.
+      canvas.title = 'Click to test this screen live · use the ⬇ button to save it as a PNG';
+      fig.appendChild(canvas);
+      fig._canvas = canvas;
+
+      // Explicit named-save affordance (top-right of the cell); the actual download is wired via
+      // delegation (initUI → downloadCell). aria-label carries the target filename for a11y.
       var dl = document.createElement('button');
       dl.type = 'button';
       dl.className = 'dl-btn';
       dl.textContent = '⬇';   // ⬇
       dl.title = 'Download this screen as a PNG';
       dl.setAttribute('aria-label', 'Download ' + cellPngName(fn, entry));
-      dl.addEventListener('click', function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        saveCanvasPng(canvas, cellPngName(fn, entry));
-      });
       fig.appendChild(dl);
+      fig._dl = dl;
     } else {
       fig.classList.add('err');
       var ph = document.createElement('div');
       ph.style.cssText = 'color:var(--err);font-size:12px;padding:20px;text-align:center;';
       ph.textContent = (rc === 0) ? 'unknown screen' : 'render failed';
       fig.appendChild(ph);
+      fig._canvas = ph;   // so a later teardown removes the error box too
     }
-    document.getElementById('grid').appendChild(fig);
   }
 
-  // Render the whole current slice (one locale × one resolution). Cancels any in-flight
-  // render, rebuilds the grid, and fills it progressively (a handful of cells per frame
-  // so the page stays responsive and cells stream in).
-  var BATCH = 6;
+  // (Re)build the current slice (one locale × one resolution): supersede any in-flight render,
+  // reset the grid + lazy machinery, lay out every cell's placeholder, then let the
+  // IntersectionObserver render each one as it nears the viewport.
   async function renderSlice() {
     if (!app.ready) return;
     var token = ++renderToken;
+
+    // Tear down the previous slice's lazy machinery (a stale engineChain entry self-skips on its
+    // superseded token; liveList/maxLive are rebuilt below). Clear the canvas pool: a new slice may
+    // be a different resolution, so pooled canvases would be the wrong size.
+    if (renderObs) { renderObs.disconnect(); renderObs = null; }
+    liveList = [];
+    clearCanvasPool();
+
     var grid = document.getElementById('grid');
     grid.innerHTML = '';
     updateCellWidth();
@@ -464,7 +664,7 @@
       });
     });
 
-    // Resolve the selected input mode for this slice; renderCell re-asserts it before
+    // Resolve the selected input mode for this slice; renderCellInto re-asserts it before
     // building EACH cell (hardware shows the focus/selection highlight, touch shows none).
     // Per-cell — not once here — because every screen shares the engine's single global
     // input mode, and some screens force their own while building (io_test_screen forces
@@ -472,16 +672,38 @@
     // rendered after the offender; re-asserting per cell makes each render honor the selector.
     var mode = (document.getElementById('mode-select').value === '0') ? 0 : 1;
 
-    var res = app.displayW + '×' + app.displayH;
+    // Hard cap on simultaneously-live canvases, enforced by evictLive after every render. Keep EVERY
+    // cell when the whole slice's canvases fit a small budget (the small device sizes — nothing ever
+    // tears down); otherwise bound the live set to ~budget/cell-bytes. Deliberately tight for the
+    // largest resolution: a full 1280×720 slice is ~570 MB, and even ~30 live canvases (~110 MB CPU,
+    // and Chrome/Android also keeps a GPU texture per canvas) crashed a Pixel 8 mid-scroll — so cap
+    // to ~48 MB of live backing store (≈13 canvases at 1280×720). Re-renders are cheap on scroll-back.
+    var CANVAS_BUDGET = 48 * 1024 * 1024;
+    var perCanvas = app.displayW * app.displayH * 4;
+    maxLiveCanvases = (cells.length * perCanvas <= CANVAS_BUDGET)
+      ? cells.length
+      : Math.max(8, Math.floor(CANVAS_BUDGET / perCanvas));
+
+    // Lay out every placeholder up-front (cheap: caption + a sized black box) so the grid is
+    // full-height immediately and scrolling is stable; engine renders happen lazily on visibility.
+    var figs = [];
     for (var i = 0; i < cells.length; i++) {
-      if (token !== renderToken) return;   // superseded by a newer slice
-      setStatus('Rendering ' + (i + 1) + ' / ' + cells.length + '  •  ' + localeLabel + '  •  ' + res);
-      await renderCell(cells[i].fn, cells[i].entry, mode, cells[i].landscapeOnly);
-      if (i % BATCH === BATCH - 1) { await raf(); }
+      figs.push(buildCellPlaceholder(cells[i].fn, cells[i].entry, mode, cells[i].landscapeOnly));
     }
-    if (token !== renderToken) return;
+
+    var res = app.displayW + '×' + app.displayH;
     setStatus(cells.length + ' screens  •  ' + localeLabel + '  •  ' + res +
-              '   (click any screen to test its live interactivity · use the ⬇ button on a cell to save it as a PNG)');
+              '   (rendered as you scroll · click any screen to test it live · ⬇ saves a cell as a PNG)');
+
+    // renderObs: enqueue a cell for rendering when it comes within RENDER_MARGIN of the viewport,
+    // so it's ready by the time it scrolls in. Teardown is NOT observer-driven — evictLive (geometry,
+    // runs after each render) enforces the live-canvas cap — so this is the only observer needed.
+    renderObs = new IntersectionObserver(function (entries) {
+      if (token !== renderToken) return;
+      entries.forEach(function (e) { if (e.isIntersecting) enqueueRender(e.target); });
+    }, { root: null, rootMargin: RENDER_MARGIN, threshold: 0 });
+
+    figs.forEach(function (fig) { if (fig._needsEngine) renderObs.observe(fig); });
   }
 
   // ---- Deep-link (res + language + input mode survive a refresh / shared link) ----
@@ -542,6 +764,17 @@
     // splash settles to its final state instead of showing the fade-in. The interactive web
     // runner leaves this OFF (it's a separate WASM instance, so the flag never leaks between them).
     if (app.setStaticRender) app.setStaticRender(1);
+
+    // Stop the engine's continuous rAF main loop. The web_runner runs emscripten_set_main_loop(frame),
+    // which every frame ticks LVGL and blits+presents to a WebGL canvas — FOREVER, and keeps ANIMATING
+    // whatever screen was last loaded (spinner, animated QR, camera preview). The gallery needs none of
+    // that: it drives its own ticks synchronously via ss_load_screen + ss_render_now and reads the
+    // framebuffer straight from the WASM heap; the WebGL canvas is never shown. Left running it's
+    // constant GPU/CPU work over a long scroll (a suspected slow-crash contributor on mobile). Pause it
+    // once, deferred so it runs AFTER main() has actually installed the loop (ssOnReady fires from
+    // inside main(), just before emscripten_set_main_loop). Idempotent + guarded for older builds.
+    setTimeout(function () { if (Module && Module.pauseMainLoop) Module.pauseMainLoop(); }, 0);
+
     app.ready = true;
     initUI();
   };
@@ -550,6 +783,31 @@
 
   // ---- UI wiring ----
   function initUI() {
+    // Re-cap the cell width when the window changes (e.g. a phone rotates or the browser resizes):
+    // updateCellWidth recomputes --cell-w against the new available width and the cells re-fit via
+    // CSS (canvas max-width:100%), with no engine re-render.
+    window.addEventListener('resize', updateCellWidth);
+
+    // Grid-level event DELEGATION for cell click (open in the runner) + the ⬇ download button. One
+    // handler for the whole grid instead of listeners per canvas/button — so the pooled canvases
+    // (reused across cells to avoid GPU texture churn) never carry stale per-cell handlers.
+    var grid = document.getElementById('grid');
+    grid.addEventListener('click', function (e) {
+      var fig = e.target.closest ? e.target.closest('figure') : null;
+      if (!fig || !fig._rendered || !fig._cell) return;   // placeholder / note / error cell
+      if (e.target.closest('.dl-btn')) { e.preventDefault(); downloadCell(fig); return; }
+      var href = runnerUrl(fig._cell.fn, fig._cell.entry);
+      if (e.ctrlKey || e.metaKey || e.shiftKey) window.open(href, '_blank');
+      else window.location.href = href;
+    });
+    grid.addEventListener('auxclick', function (e) {   // middle-click → open in a new tab
+      if (e.button !== 1) return;
+      var fig = e.target.closest ? e.target.closest('figure') : null;
+      if (!fig || !fig._rendered || !fig._cell || e.target.closest('.dl-btn')) return;
+      e.preventDefault();
+      window.open(runnerUrl(fig._cell.fn, fig._cell.entry), '_blank');
+    });
+
     var localeSel = document.getElementById('locale-select');
     var resSel    = document.getElementById('res-select');
     var modeSel   = document.getElementById('mode-select');
