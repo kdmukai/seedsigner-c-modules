@@ -10,6 +10,7 @@
 #include "overlay_manager.h"
 #include "locale_loader.h"   // ss_load_locale / ss_unload_locale / ss_reap_retired
 #include "components.h"      // button_text_label / button_set_label_marquee (address-list click test)
+#include "gui_constants.h"   // SeedSignerIconConstants::CHECK (seed-word touch test)
 
 #include "lvgl.h"
 
@@ -76,6 +77,53 @@ static std::string g_last_selected_label;
 extern "C" void seedsigner_lvgl_on_button_selected(uint32_t index, const char* label) {
     g_last_selected_index = index;
     g_last_selected_label = label ? label : "";
+}
+
+// Capture text-entry results as the host does. The seed-word touch test uses this
+// to verify that CHECK immediately accepts the sole remaining candidate.
+static std::string g_last_entered_text;
+extern "C" void seedsigner_lvgl_on_text_entered(const char* text) {
+    g_last_entered_text = text ? text : "";
+}
+
+// Find the parent of the first label whose text exactly matches `text`.
+static lv_obj_t* find_parent_with_label(lv_obj_t* obj, const char* text) {
+    if (!obj) return nullptr;
+    if (lv_obj_check_type(obj, &lv_label_class)) {
+        const char* label_text = lv_label_get_text(obj);
+        if (label_text && std::string(label_text) == text) return lv_obj_get_parent(obj);
+    }
+    uint32_t n = lv_obj_get_child_count(obj);
+    for (uint32_t i = 0; i < n; ++i) {
+        lv_obj_t* found = find_parent_with_label(lv_obj_get_child(obj, i), text);
+        if (found) return found;
+    }
+    return nullptr;
+}
+
+static lv_obj_t* find_buttonmatrix(lv_obj_t* obj) {
+    if (!obj) return nullptr;
+    if (lv_obj_check_type(obj, &lv_buttonmatrix_class)) return obj;
+    uint32_t n = lv_obj_get_child_count(obj);
+    for (uint32_t i = 0; i < n; ++i) {
+        lv_obj_t* found = find_buttonmatrix(lv_obj_get_child(obj, i));
+        if (found) return found;
+    }
+    return nullptr;
+}
+
+static bool activate_matrix_button(lv_obj_t* matrix, const char* text) {
+    if (!matrix) return false;
+    for (uint32_t i = 0; ; ++i) {
+        const char* button_text = lv_buttonmatrix_get_button_text(matrix, i);
+        if (!button_text) break;
+        if (button_text && std::string(button_text) == text) {
+            lv_buttonmatrix_set_selected_button(matrix, i);
+            lv_obj_send_event(matrix, LV_EVENT_VALUE_CHANGED, NULL);
+            return true;
+        }
+    }
+    return false;
 }
 
 // Recursively find the address-explorer list's row-0 button: the first lv_button whose
@@ -160,6 +208,47 @@ int main(int argc, char** argv) {
     for (const auto& g : groups)
         if (g.scenarios.size() > 1) found_variations = true;
     check(found_variations, "at least one screen has merged variations");
+
+    // -----------------------------------------------------------------------
+    // Seed-word touch entry: narrowing the prefix to one candidate selects it
+    // automatically, enabling CHECK as the only remaining confirmation step.
+    // Multiple candidates must still require an explicit row selection.
+    // -----------------------------------------------------------------------
+    printf("\n-- seed-word touch entry: sole match is ready to confirm --\n");
+    {
+        const std::string multiple_matches_ctx =
+            "{\"input\":{\"mode\":\"touch\"},"
+            "\"top_nav\":{\"title\":\"Seed Word #1\"},"
+            "\"wordlist\":[\"mushroom\",\"music\",\"must\"],"
+            "\"initial_letters\":\"mus\"}";
+        check(runner_core::load_screen("seed_mnemonic_entry_screen", multiple_matches_ctx),
+              "seed word: load touch screen with multiple matches");
+        for (int i = 0; i < 3; ++i) runner_core::tick(16);
+
+        lv_obj_t* check_button = find_parent_with_label(lv_scr_act(), SeedSignerIconConstants::CHECK);
+        check(check_button != nullptr, "seed word: found CHECK button");
+        if (check_button) {
+            check(!lv_obj_has_flag(check_button, LV_OBJ_FLAG_CLICKABLE),
+                  "seed word: CHECK disabled while multiple matches remain");
+        }
+
+        lv_obj_t* matrix = find_buttonmatrix(lv_scr_act());
+        check(matrix != nullptr, "seed word: found touch keyboard");
+        check(activate_matrix_button(matrix, "h"),
+              "seed word: typed fourth letter to leave one match");
+        runner_core::tick(16);
+
+        check_button = find_parent_with_label(lv_scr_act(), SeedSignerIconConstants::CHECK);
+        check(check_button != nullptr, "seed word: found CHECK button after narrowing");
+        if (check_button) {
+            check(lv_obj_has_flag(check_button, LV_OBJ_FLAG_CLICKABLE),
+                  "seed word: sole match automatically enables CHECK");
+            g_last_entered_text.clear();
+            lv_obj_send_event(check_button, LV_EVENT_CLICKED, NULL);
+            check(g_last_entered_text == "mushroom",
+                  "seed word: CHECK accepts the automatically selected word");
+        }
+    }
 
     // -----------------------------------------------------------------------
     // Address-explorer list: a row click reports the row's CANONICAL FULL text,

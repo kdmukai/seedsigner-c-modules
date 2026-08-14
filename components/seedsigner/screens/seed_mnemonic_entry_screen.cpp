@@ -17,8 +17,8 @@
 //   - touch (deliberate divergence from Python, UX review pending): a
 //     scrollable candidate list (tap a word to highlight it in place) + a
 //     persistent green CHECK button beneath, disabled until a selection
-//     exists, tap = accept. No fixed slot, no modal — mirrors the passphrase
-//     confirm idiom.
+//     exists. A sole remaining candidate is selected automatically; tap CHECK
+//     to accept. No fixed slot, no modal — mirrors the passphrase confirm idiom.
 //
 // Returns the chosen word via seedsigner_lvgl_on_text_entered() (the same host
 // hook the other keyboard screens use); BACK returns RET_CODE__BACK_BUTTON via
@@ -295,7 +295,8 @@ void seed_mnemonic_entry_render_matches_hardware(seed_mnemonic_entry_ctx_t *ctx)
 }
 
 // Touch: rebuild the scrollable candidate list (one tappable button per match),
-// clearing any prior selection and disabling the accept button.
+// clearing any prior selection. A single remaining match is selected automatically
+// so the user can confirm it directly with CHECK, matching the hardware flow.
 void seed_mnemonic_entry_render_matches_touch(seed_mnemonic_entry_ctx_t *ctx) {
     if (!ctx->candidate_list || !lv_obj_is_valid(ctx->candidate_list)) return;
     lv_obj_clean(ctx->candidate_list);
@@ -325,6 +326,12 @@ void seed_mnemonic_entry_render_matches_touch(seed_mnemonic_entry_ctx_t *ctx) {
         lv_obj_align(label, LV_ALIGN_LEFT_MID, 0, 0);
 
         seed_mnemonic_entry_style_candidate(row, false);
+    }
+
+    if (ctx->possible_words.size() == 1) {
+        ctx->touch_selected = 0;
+        seed_mnemonic_entry_style_candidate(lv_obj_get_child(ctx->candidate_list, 0), true);
+        seed_mnemonic_entry_set_check_enabled(ctx, true);
     }
 }
 
@@ -823,10 +830,10 @@ void seed_mnemonic_entry_screen(void *ctx_json) {
     seed_mnemonic_entry_render_matches(ctx);
 
     // Optional: pre-select one of the current candidate words. Mainly for static
-    // screenshots of the touch accept affordance (the selection + enabled CHECK is
-    // otherwise only reachable by tapping at runtime). Applied after the initial
-    // render so the candidate widgets already exist. No-op if the word isn't a
-    // current match.
+    // screenshots of the touch accept affordance with multiple matches (a sole
+    // match is already selected automatically). Applied after the initial render
+    // so the candidate widgets already exist. No-op if the word isn't a current
+    // match.
     std::string preselect = cfg.value("initial_selected_word", std::string());
     if (!preselect.empty()) {
         int match_index = -1;
